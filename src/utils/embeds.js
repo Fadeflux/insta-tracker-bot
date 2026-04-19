@@ -1,12 +1,15 @@
-const { EmbedBuilder } = require('discord.js');
+var { EmbedBuilder } = require('discord.js');
 
-const COLORS = {
+var COLORS = {
   primary: 0xe1306c,
   success: 0x2ecc71,
   warning: 0xf39c12,
   error: 0xe74c3c,
   info: 0x3498db,
   neutral: 0x95a5a6,
+  gold: 0xffd700,
+  silver: 0xc0c0c0,
+  bronze: 0xcd7f32,
 };
 
 function newPostEmbed(post, stats) {
@@ -24,7 +27,7 @@ function newPostEmbed(post, stats) {
 }
 
 function hourlyUpdateEmbed(post, currentStats, previousStats) {
-  const diff = computeDiff(currentStats, previousStats);
+  var diff = computeDiff(currentStats, previousStats);
   return new EmbedBuilder()
     .setColor(COLORS.info)
     .setTitle('Mise a jour horaire')
@@ -39,16 +42,22 @@ function hourlyUpdateEmbed(post, currentStats, previousStats) {
 }
 
 function dailySummaryEmbed(vaName, summary, rank) {
-  const medal = rank <= 3 ? ['1er', '2e', '3e'][rank - 1] : '#' + rank;
+  var medals = { 1: '??', 2: '??', 3: '??' };
+  var medal = medals[rank] || '#' + rank;
+  var rankColors = { 1: COLORS.gold, 2: COLORS.silver, 3: COLORS.bronze };
+  var color = rankColors[rank] || COLORS.neutral;
+
+  var postStatus = Number(summary.post_count) >= 6 ? '?' : '??';
+
   return new EmbedBuilder()
-    .setColor(rank <= 3 ? COLORS.success : COLORS.neutral)
+    .setColor(color)
     .setTitle(medal + ' ' + vaName)
     .addFields(
-      { name: 'Posts', value: '' + summary.post_count + '/6', inline: true },
-      { name: 'Vues totales', value: fmt(summary.total_views), inline: true },
-      { name: 'Likes totaux', value: fmt(summary.total_likes), inline: true },
-      { name: 'Commentaires', value: fmt(summary.total_comments), inline: true },
-      { name: 'Republications', value: fmt(summary.total_shares), inline: true }
+      { name: 'Posts', value: postStatus + ' ' + summary.post_count + '/6', inline: true },
+      { name: '??? Vues totales', value: fmt(summary.total_views), inline: true },
+      { name: '?? Likes totaux', value: fmt(summary.total_likes), inline: true },
+      { name: '?? Commentaires', value: fmt(summary.total_comments), inline: true },
+      { name: '?? Republications', value: fmt(summary.total_shares), inline: true }
     )
     .setTimestamp();
 }
@@ -59,29 +68,51 @@ function vaStatsEmbed(vaName, stats, posts) {
     .setTitle('Stats du jour - ' + vaName)
     .addFields(
       { name: 'Posts', value: '' + posts.length + '/6', inline: true },
-      { name: 'Vues', value: fmt(stats.total_views), inline: true },
-      { name: 'Likes', value: fmt(stats.total_likes), inline: true },
-      { name: 'Commentaires', value: fmt(stats.total_comments), inline: true },
-      { name: 'Republications', value: fmt(stats.total_shares), inline: true }
+      { name: '??? Vues', value: fmt(stats.total_views), inline: true },
+      { name: '?? Likes', value: fmt(stats.total_likes), inline: true },
+      { name: '?? Commentaires', value: fmt(stats.total_comments), inline: true },
+      { name: '?? Republications', value: fmt(stats.total_shares), inline: true }
     )
     .setTimestamp();
 }
 
 function leaderboardEmbed(rankings, date) {
-  const lines = rankings.map((r, i) => {
-    const medal = i < 3 ? ['1er', '2e', '3e'][i] : (i + 1) + '.';
-    return medal + ' **' + r.va_name + '** - ' + r.post_count + ' posts | Vues ' + fmt(r.total_views) + ' | Likes ' + fmt(r.total_likes);
+  var medals = { 0: '??', 1: '??', 2: '??' };
+  var lines = rankings.map(function(r, i) {
+    var medal = medals[i] || '  ' + (i + 1) + '.';
+    var postStatus = Number(r.post_count) >= 6 ? '?' : '?? (' + r.post_count + '/6)';
+    return medal + ' **' + r.va_name + '** ? ??? ' + fmt(r.total_views) + ' | ?? ' + fmt(r.total_likes) + ' | ' + postStatus;
   });
   return new EmbedBuilder()
-    .setColor(COLORS.success)
-    .setTitle('Classement du ' + date)
+    .setColor(COLORS.gold)
+    .setTitle('?? Classement du ' + date)
     .setDescription(lines.join('\n') || 'Aucune donnee')
+    .setFooter({ text: 'Classe par nombre de vues | ? = 6+ posts | ?? = objectif non atteint' })
+    .setTimestamp();
+}
+
+function missingPostsEmbed(lateVAs, date) {
+  var lines = lateVAs.map(function(va) {
+    return '?? **' + va.name + '** ? ' + va.postCount + '/6 posts';
+  });
+  return new EmbedBuilder()
+    .setColor(COLORS.error)
+    .setTitle('? VA n\'ayant pas atteint 6 posts ? ' + date)
+    .setDescription(lines.join('\n') || 'Tout le monde a atteint l\'objectif !')
+    .setTimestamp();
+}
+
+function allPostsMetEmbed(date) {
+  return new EmbedBuilder()
+    .setColor(COLORS.success)
+    .setTitle('?? Objectif atteint ! ? ' + date)
+    .setDescription('Tous les VA ont poste au moins **6 posts** aujourd\'hui. Bravo a toute l\'equipe !')
     .setTimestamp();
 }
 
 function formatStats(s) {
   if (!s) return 'Donnees indisponibles';
-  return 'Vues: **' + fmt(s.views) + '**\nLikes: **' + fmt(s.likes) + '**\nCommentaires: **' + fmt(s.comments) + '**\nRepublications: **' + fmt(s.shares) + '**';
+  return '??? Vues: **' + fmt(s.views) + '**\n?? Likes: **' + fmt(s.likes) + '**\n?? Commentaires: **' + fmt(s.comments) + '**\n?? Republications: **' + fmt(s.shares) + '**';
 }
 
 function computeDiff(current, previous) {
@@ -96,7 +127,7 @@ function computeDiff(current, previous) {
 
 function formatDiff(d) {
   var sign = function(n) { return n >= 0 ? '+' + fmt(n) : '' + fmt(n); };
-  return 'Vues ' + sign(d.views) + '\nLikes ' + sign(d.likes) + '\nCommentaires ' + sign(d.comments) + '\nRepublications ' + sign(d.shares);
+  return '??? ' + sign(d.views) + '\n?? ' + sign(d.likes) + '\n?? ' + sign(d.comments) + '\n?? ' + sign(d.shares);
 }
 
 function fmt(n) {
@@ -104,4 +135,4 @@ function fmt(n) {
   return Number(n).toLocaleString('fr-FR');
 }
 
-module.exports = { COLORS, newPostEmbed, hourlyUpdateEmbed, dailySummaryEmbed, vaStatsEmbed, leaderboardEmbed };
+module.exports = { COLORS: COLORS, newPostEmbed: newPostEmbed, hourlyUpdateEmbed: hourlyUpdateEmbed, dailySummaryEmbed: dailySummaryEmbed, vaStatsEmbed: vaStatsEmbed, leaderboardEmbed: leaderboardEmbed, missingPostsEmbed: missingPostsEmbed, allPostsMetEmbed: allPostsMetEmbed };
