@@ -14,10 +14,10 @@
     "pg": "^8.12.0",
     "bullmq": "^5.12.0",
     "ioredis": "^5.3.2",
-    "playwright": "^1.42.0",
     "node-cron": "^3.0.3",
     "winston": "^3.11.0",
     "dotenv": "^16.4.5",
-    "json2csv": "^6.0.0-alpha.2"
+    "json2csv": "^6.0.0-alpha.2",
+    "express": "^4.18.2"
   }
 }

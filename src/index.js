@@ -12,6 +12,7 @@ var { handleMessage } = require('./bot/messageHandler');
 var { handleCommand } = require('./bot/commands');
 var { initCronJobs } = require('./jobs/cron');
 var { setDiscordClient, createNotifyWorker } = require('./jobs/notifyWorker');
+var { createWebServer } = require('./web/server');
 console.log('All modules loaded OK');
 
 var client = new Client({
@@ -48,6 +49,10 @@ async function start() {
     console.log('Initializing database...');
     await initDb();
     console.log('Database ready');
+
+    // Start web dashboard
+    createWebServer();
+
     console.log('Logging in to Discord...');
     await client.login(config.discord.token);
   } catch (err) {
