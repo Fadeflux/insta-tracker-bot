@@ -1,106 +1,79 @@
-const { chromium } = require('playwright');
-const logger = require('../utils/logger');
-const config = require('../../config');
-
-var browser = null;
-
-async function initBrowser() {
-  if (!browser) {
-    browser = await chromium.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
-    });
-    logger.info('Browser launched');
-  }
-  return browser;
-}
-
-async function closeBrowser() {
-  if (browser) { await browser.close(); browser = null; logger.info('Browser closed'); }
-}
+var https = require('https');
+var http = require('http');
 
 async function scrapePost(url) {
-  var b = await initBrowser();
-  var context = await b.newContext({
-    userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
-    viewport: { width: 390, height: 844 },
-    locale: 'en-US',
-  });
-  var page = await context.newPage();
   var result = { views: 0, likes: 0, comments: 0, shares: 0 };
 
   try {
-    await page.route('**/*', function(route) {
-      var type = route.request().resourceType();
-      if (['image', 'media', 'font', 'stylesheet'].includes(type)) route.abort();
-      else route.continue();
-    });
+    var html = await fetchPage(url);
+    console.log('Fetched page length: ' + html.length);
 
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-    await page.waitForTimeout(3000);
+    // Strategy 1: og:description meta tag
+    var ogMatch = html.match(/<meta\s+(?:property|name)="og:description"\s+content="([^"]+)"/i);
+    if (!ogMatch) ogMatch = html.match(/content="([^"]+)"\s+(?:property|name)="og:description"/i);
 
-    var metaContent = await page.evaluate(function() {
-      var ogDesc = document.querySelector('meta[property="og:description"]');
-      if (ogDesc) return ogDesc.getAttribute('content');
-      return null;
-    });
-
-    if (metaContent) {
-      var likesMatch = metaContent.match(/([\d,.KMkm]+)\s*likes?/i);
-      var commentsMatch = metaContent.match(/([\d,.KMkm]+)\s*comments?/i);
+    if (ogMatch) {
+      var desc = ogMatch[1];
+      console.log('OG description: ' + desc);
+      var likesMatch = desc.match(/([\d,.]+[KMkm]?)\s*likes?/i);
+      var commentsMatch = desc.match(/([\d,.]+[KMkm]?)\s*comments?/i);
       if (likesMatch) result.likes = parseMetricValue(likesMatch[1]);
       if (commentsMatch) result.comments = parseMetricValue(commentsMatch[1]);
     }
 
-    var pageStats = await page.evaluate(function() {
-      var stats = {};
-      var allText = document.body.innerText;
-      var viewsMatch = allText.match(/([\d,.]+[KMkm]?)\s*(?:views?|plays?|vues?)/i);
-      if (viewsMatch) stats.views = viewsMatch[1];
-      var likesMatch = allText.match(/([\d,.]+[KMkm]?)\s*likes?/i);
-      if (likesMatch) stats.likes = likesMatch[1];
-      var commentsMatch = allText.match(/([\d,.]+[KMkm]?)\s*comments?/i);
-      if (commentsMatch) stats.comments = commentsMatch[1];
-      return stats;
-    });
+    // Strategy 2: video view count
+    var viewsMatch = html.match(/"video_view_count"\s*:\s*(\d+)/);
+    if (viewsMatch) result.views = parseInt(viewsMatch[1], 10);
 
-    if (pageStats.views) result.views = parseMetricValue(pageStats.views);
-    if (pageStats.likes && result.likes === 0) result.likes = parseMetricValue(pageStats.likes);
-    if (pageStats.comments && result.comments === 0) result.comments = parseMetricValue(pageStats.comments);
+    var playMatch = html.match(/"play_count"\s*:\s*(\d+)/);
+    if (playMatch && result.views === 0) result.views = parseInt(playMatch[1], 10);
 
-    var jsonLd = await page.evaluate(function() {
-      var scripts = document.querySelectorAll('script[type="application/ld+json"]');
-      for (var i = 0; i < scripts.length; i++) {
-        try {
-          var data = JSON.parse(scripts[i].textContent);
-          if (data.interactionStatistic) return data;
-          if (data['@type'] === 'VideoObject' || data['@type'] === 'ImageObject') return data;
-        } catch(e) {}
-      }
-      return null;
-    });
+    // Strategy 3: like count from JSON
+    var likeJson = html.match(/"edge_media_preview_like"\s*:\s*\{\s*"count"\s*:\s*(\d+)/);
+    if (likeJson && result.likes === 0) result.likes = parseInt(likeJson[1], 10);
 
-    if (jsonLd && jsonLd.interactionStatistic) {
-      for (var i = 0; i < jsonLd.interactionStatistic.length; i++) {
-        var stat = jsonLd.interactionStatistic[i];
-        var type = (stat.interactionType && stat.interactionType['@type']) || stat.interactionType || '';
-        var count = parseInt(stat.userInteractionCount || '0', 10);
-        if (type.includes('Like')) result.likes = count;
-        if (type.includes('Comment')) result.comments = count;
-        if (type.includes('Watch') || type.includes('View')) result.views = count;
-        if (type.includes('Share')) result.shares = count;
-      }
-    }
+    var commentJson = html.match(/"edge_media_preview_comment"\s*:\s*\{\s*"count"\s*:\s*(\d+)/);
+    if (commentJson && result.comments === 0) result.comments = parseInt(commentJson[1], 10);
 
-    logger.info('Scraped ' + url, result);
+    // Strategy 4: edge_media_to_comment
+    var commentJson2 = html.match(/"edge_media_to_comment"\s*:\s*\{\s*"count"\s*:\s*(\d+)/);
+    if (commentJson2 && result.comments === 0) result.comments = parseInt(commentJson2[1], 10);
+
+    console.log('Scrape result:', JSON.stringify(result));
     return result;
   } catch (err) {
-    logger.error('Scrape failed for ' + url, { error: err.message });
+    console.error('Scrape failed for ' + url + ': ' + err.message);
     result.error = err.message;
     return result;
-  } finally {
-    await context.close();
   }
+}
+
+function fetchPage(url) {
+  return new Promise(function(resolve, reject) {
+    var client = url.startsWith('https') ? https : http;
+    var options = {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+      }
+    };
+
+    function doRequest(reqUrl, redirects) {
+      if (redirects > 5) return reject(new Error('Too many redirects'));
+      client.get(reqUrl, options, function(res) {
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          return doRequest(res.headers.location, redirects + 1);
+        }
+        var data = '';
+        res.on('data', function(chunk) { data += chunk; });
+        res.on('end', function() { resolve(data); });
+        res.on('error', reject);
+      }).on('error', reject);
+    }
+
+    doRequest(url, 0);
+  });
 }
 
 function parseMetricValue(str) {
@@ -114,4 +87,7 @@ function parseMetricValue(str) {
   return Math.round(num * mult);
 }
 
-module.exports = { scrapePost, initBrowser, closeBrowser };
+function initBrowser() { return Promise.resolve(); }
+function closeBrowser() { return Promise.resolve(); }
+
+module.exports = { scrapePost: scrapePost, initBrowser: initBrowser, closeBrowser: closeBrowser };
