@@ -123,6 +123,16 @@ function createWebServer() {
     } catch(err) { res.status(500).json({ error: err.message }); }
   });
 
+  // Top posts endpoint
+  app.get('/api/top-posts', checkAuth, async function(req, res) {
+    try {
+      var date = req.query.date || new Date().toISOString().split('T')[0];
+      var sql = "SELECT p.id, p.ig_post_id, p.url, p.va_name, p.va_discord_id, p.created_at, s.views, s.likes, s.comments, s.shares FROM posts p LEFT JOIN LATERAL (SELECT views, likes, comments, shares FROM snapshots sn WHERE sn.post_id = p.id ORDER BY sn.scraped_at DESC LIMIT 1) s ON true WHERE p.created_at::date = $1 ORDER BY COALESCE(s.views, 0) DESC LIMIT 20";
+      var result = await db.pool.query(sql, [date]);
+      res.json({ date: date, posts: result.rows });
+    } catch(err) { res.status(500).json({ error: err.message }); }
+  });
+
   app.get('/', function(req, res) {
     res.sendFile(path.join(__dirname, 'dashboard.html'));
   });

@@ -89,4 +89,5 @@ async function getPostsForExport(date) {
   return result.rows;
 }
 
-module.exports = { insertPost, getPost, getPostByIgId, getActivePosts, endTracking, setPostError, setManagerMsgId, insertSnapshot, getLatestSnapshot, getSnapshotHistory, computeDailySummary, getDailySummaries, getVaDailyStats, getVaPostsToday, getLeaderboard, endExpiredPosts, getPostsForExport };
+module.exports = { pool: require('./init').pool, insertPost, getPost, getPostByIgId, getActivePosts, endTracking, setPostError, setManagerMsgId, insertSnapshot, getLatestSnapshot, getSnapshotHistory, computeDailySummary, getDailySummaries, getVaDailyStats, getVaPostsToday, getLeaderboard, endExpiredPosts, getPostsForExport };
+
