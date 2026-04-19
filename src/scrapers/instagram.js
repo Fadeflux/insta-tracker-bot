@@ -1,4 +1,11 @@
 var https = require('https');
+var http = require('http');
+var net = require('net');
+
+var PROXY_HOST = process.env.PROXY_HOST || '5.161.16.191';
+var PROXY_PORT = parseInt(process.env.PROXY_PORT || '19751');
+var PROXY_USER = process.env.PROXY_USER || '';
+var PROXY_PASS = process.env.PROXY_PASS || '';
 
 async function scrapePost(url) {
   var result = { views: 0, likes: 0, comments: 0, shares: 0 };
@@ -6,95 +13,86 @@ async function scrapePost(url) {
   if (!postId) { result.error = 'Invalid URL'; return result; }
 
   try {
-    // Strategy 1: Try oembed endpoint
-    var oembedUrl = 'https://api.instagram.com/oembed/?url=https://www.instagram.com/p/' + postId + '/';
+    // Try embed page through proxy
+    var embedUrl = 'https://www.instagram.com/p/' + postId + '/embed/';
+    var embedHtml = '';
     try {
-      var oembedData = await fetchJson(oembedUrl);
-      if (oembedData && oembedData.title) {
-        console.log('Oembed title: ' + oembedData.title);
-      }
+      embedHtml = await fetchViaProxy(embedUrl);
+      console.log('Embed via proxy length: ' + embedHtml.length);
     } catch(e) {
-      console.log('Oembed failed: ' + e.message);
+      console.log('Embed proxy failed, trying direct: ' + e.message);
+      embedHtml = await fetchDirect(embedUrl);
+      console.log('Embed direct length: ' + embedHtml.length);
     }
 
-    // Strategy 2: Try embed page
-    var embedUrl = 'https://www.instagram.com/p/' + postId + '/embed/';
-    var embedHtml = await fetchPage(embedUrl);
-    console.log('Embed page length: ' + embedHtml.length);
-
-    // Extract likes from embed
-    var likesPatterns = [
-      /"edge_liked_by"\s*:\s*\{\s*"count"\s*:\s*(\d+)/,
-      /"edge_media_preview_like"\s*:\s*\{\s*"count"\s*:\s*(\d+)/,
-      /(\d[\d,.]*)\s*likes?/i,
-      /likes?\s*:\s*(\d[\d,.]*)/i,
-      /"like_count"\s*:\s*(\d+)/,
-    ];
+    // Extract from embed
+    var likesPatterns = [/"like_count"\s*:\s*(\d+)/, /"edge_media_preview_like"\s*:\s*\{\s*"count"\s*:\s*(\d+)/, /(\d[\d,.]*)\s*likes?/i];
     for (var i = 0; i < likesPatterns.length; i++) {
       var m = embedHtml.match(likesPatterns[i]);
-      if (m && result.likes === 0) {
-        result.likes = parseMetricValue(m[1]);
-        console.log('Likes found with pattern ' + i + ': ' + result.likes);
-        break;
-      }
+      if (m && result.likes === 0) { result.likes = parseNum(m[1]); break; }
     }
 
-    // Extract comments
-    var commentsPatterns = [
-      /"edge_media_to_comment"\s*:\s*\{\s*"count"\s*:\s*(\d+)/,
-      /"edge_media_preview_comment"\s*:\s*\{\s*"count"\s*:\s*(\d+)/,
-      /"comment_count"\s*:\s*(\d+)/,
-      /(\d[\d,.]*)\s*comments?/i,
-    ];
+    var commentsPatterns = [/"comment_count"\s*:\s*(\d+)/, /"edge_media_to_comment"\s*:\s*\{\s*"count"\s*:\s*(\d+)/, /"edge_media_preview_comment"\s*:\s*\{\s*"count"\s*:\s*(\d+)/];
     for (var j = 0; j < commentsPatterns.length; j++) {
       var mc = embedHtml.match(commentsPatterns[j]);
-      if (mc && result.comments === 0) {
-        result.comments = parseMetricValue(mc[1]);
-        console.log('Comments found with pattern ' + j + ': ' + result.comments);
-        break;
-      }
+      if (mc && result.comments === 0) { result.comments = parseNum(mc[1]); break; }
     }
 
-    // Extract views
-    var viewsPatterns = [
-      /"video_view_count"\s*:\s*(\d+)/,
-      /"play_count"\s*:\s*(\d+)/,
-      /"view_count"\s*:\s*(\d+)/,
-      /(\d[\d,.]*)\s*(?:views?|plays?|vues?)/i,
-    ];
+    var viewsPatterns = [/"video_view_count"\s*:\s*(\d+)/, /"play_count"\s*:\s*(\d+)/, /"view_count"\s*:\s*(\d+)/];
     for (var k = 0; k < viewsPatterns.length; k++) {
       var mv = embedHtml.match(viewsPatterns[k]);
-      if (mv && result.views === 0) {
-        result.views = parseMetricValue(mv[1]);
-        console.log('Views found with pattern ' + k + ': ' + result.views);
-        break;
-      }
+      if (mv && result.views === 0) { result.views = parseNum(mv[1]); break; }
     }
 
-    // Strategy 3: Try main page with different user agent
+    // Try main page through proxy for more data
     if (result.likes === 0 && result.views === 0) {
-      var mainHtml = await fetchPage(url);
-      console.log('Main page length: ' + mainHtml.length);
-
-      // og:description often has stats
-      var ogMatch = mainHtml.match(/content="([^"]*?\d+[^"]*?likes?[^"]*)"/i);
-      if (ogMatch) {
-        console.log('OG content: ' + ogMatch[1]);
-        var lm = ogMatch[1].match(/([\d,.]+[KMkm]?)\s*likes?/i);
-        var cm = ogMatch[1].match(/([\d,.]+[KMkm]?)\s*comments?/i);
-        if (lm) result.likes = parseMetricValue(lm[1]);
-        if (cm) result.comments = parseMetricValue(cm[1]);
+      var mainHtml = '';
+      try {
+        mainHtml = await fetchViaProxy(url);
+        console.log('Main via proxy length: ' + mainHtml.length);
+      } catch(e2) {
+        mainHtml = await fetchDirect(url);
+        console.log('Main direct length: ' + mainHtml.length);
       }
 
-      // Try JSON data in page
-      var jsonLikes = mainHtml.match(/"like_count"\s*:\s*(\d+)/);
-      if (jsonLikes && result.likes === 0) result.likes = parseInt(jsonLikes[1], 10);
+      var ogMatch = mainHtml.match(/content="([^"]*?\d+[^"]*?likes?[^"]*)"/i);
+      if (ogMatch) {
+        console.log('OG: ' + ogMatch[1]);
+        var lm = ogMatch[1].match(/([\d,.]+[KMkm]?)\s*likes?/i);
+        var cm = ogMatch[1].match(/([\d,.]+[KMkm]?)\s*comments?/i);
+        if (lm && result.likes === 0) result.likes = parseNum(lm[1]);
+        if (cm && result.comments === 0) result.comments = parseNum(cm[1]);
+      }
 
-      var jsonViews = mainHtml.match(/"play_count"\s*:\s*(\d+)/);
-      if (jsonViews && result.views === 0) result.views = parseInt(jsonViews[1], 10);
+      var jl = mainHtml.match(/"like_count"\s*:\s*(\d+)/);
+      if (jl && result.likes === 0) result.likes = parseInt(jl[1], 10);
+      var jv = mainHtml.match(/"play_count"\s*:\s*(\d+)/);
+      if (jv && result.views === 0) result.views = parseInt(jv[1], 10);
+      var jc = mainHtml.match(/"comment_count"\s*:\s*(\d+)/);
+      if (jc && result.comments === 0) result.comments = parseInt(jc[1], 10);
 
-      var jsonComments = mainHtml.match(/"comment_count"\s*:\s*(\d+)/);
-      if (jsonComments && result.comments === 0) result.comments = parseInt(jsonComments[1], 10);
+      // Try graphql data
+      var gql = mainHtml.match(/"edge_media_preview_like"\s*:\s*\{"count"\s*:\s*(\d+)/);
+      if (gql && result.likes === 0) result.likes = parseInt(gql[1], 10);
+      var gqlv = mainHtml.match(/"video_view_count"\s*:\s*(\d+)/);
+      if (gqlv && result.views === 0) result.views = parseInt(gqlv[1], 10);
+    }
+
+    // Try reel page if it is a reel
+    if (result.views === 0 && url.includes('/reel/')) {
+      try {
+        var reelUrl = 'https://www.instagram.com/reel/' + postId + '/';
+        var reelHtml = await fetchViaProxy(reelUrl);
+        console.log('Reel via proxy length: ' + reelHtml.length);
+        var rv = reelHtml.match(/"play_count"\s*:\s*(\d+)/);
+        if (rv) result.views = parseInt(rv[1], 10);
+        var rl = reelHtml.match(/"like_count"\s*:\s*(\d+)/);
+        if (rl && result.likes === 0) result.likes = parseInt(rl[1], 10);
+        var rc = reelHtml.match(/"comment_count"\s*:\s*(\d+)/);
+        if (rc && result.comments === 0) result.comments = parseInt(rc[1], 10);
+      } catch(e3) {
+        console.log('Reel fetch failed: ' + e3.message);
+      }
     }
 
     console.log('Final result for ' + postId + ': ' + JSON.stringify(result));
@@ -111,48 +109,134 @@ function extractId(url) {
   return m ? m[1] : null;
 }
 
-function fetchPage(url) {
+// SOCKS5 proxy fetch
+function fetchViaProxy(targetUrl) {
+  return new Promise(function(resolve, reject) {
+    var timeout = setTimeout(function() { reject(new Error('Proxy timeout')); }, 30000);
+
+    var parsed = new URL(targetUrl);
+    var socket = new net.Socket();
+
+    socket.connect(PROXY_PORT, PROXY_HOST, function() {
+      // SOCKS5 greeting with auth
+      var hasAuth = PROXY_USER && PROXY_PASS;
+      if (hasAuth) {
+        socket.write(Buffer.from([0x05, 0x02, 0x00, 0x02]));
+      } else {
+        socket.write(Buffer.from([0x05, 0x01, 0x00]));
+      }
+    });
+
+    var step = 0;
+    var data = Buffer.alloc(0);
+
+    socket.on('data', function(chunk) {
+      if (step === 0) {
+        // Greeting response
+        if (chunk[0] !== 0x05) { clearTimeout(timeout); socket.destroy(); return reject(new Error('Not SOCKS5')); }
+
+        if (chunk[1] === 0x02) {
+          // Need auth
+          var userBuf = Buffer.from(PROXY_USER);
+          var passBuf = Buffer.from(PROXY_PASS);
+          var authBuf = Buffer.alloc(3 + userBuf.length + passBuf.length);
+          authBuf[0] = 0x01;
+          authBuf[1] = userBuf.length;
+          userBuf.copy(authBuf, 2);
+          authBuf[2 + userBuf.length] = passBuf.length;
+          passBuf.copy(authBuf, 3 + userBuf.length);
+          socket.write(authBuf);
+          step = 1;
+        } else if (chunk[1] === 0x00) {
+          // No auth needed, send connect
+          sendConnect(socket, parsed.hostname, parseInt(parsed.port || '443'));
+          step = 2;
+        } else {
+          clearTimeout(timeout); socket.destroy(); reject(new Error('Auth method rejected'));
+        }
+      } else if (step === 1) {
+        // Auth response
+        if (chunk[1] !== 0x00) { clearTimeout(timeout); socket.destroy(); return reject(new Error('Auth failed')); }
+        sendConnect(socket, parsed.hostname, parseInt(parsed.port || '443'));
+        step = 2;
+      } else if (step === 2) {
+        // Connect response
+        if (chunk[1] !== 0x00) { clearTimeout(timeout); socket.destroy(); return reject(new Error('Connect failed: ' + chunk[1])); }
+
+        // TLS handshake
+        var tls = require('tls');
+        var tlsSocket = tls.connect({ socket: socket, servername: parsed.hostname }, function() {
+          var req = 'GET ' + parsed.pathname + (parsed.search || '') + ' HTTP/1.1\r\n' +
+            'Host: ' + parsed.hostname + '\r\n' +
+            'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36\r\n' +
+            'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\r\n' +
+            'Accept-Language: en-US,en;q=0.9\r\n' +
+            'Accept-Encoding: identity\r\n' +
+            'Connection: close\r\n\r\n';
+          tlsSocket.write(req);
+        });
+
+        var responseData = '';
+        tlsSocket.on('data', function(d) { responseData += d.toString(); });
+        tlsSocket.on('end', function() {
+          clearTimeout(timeout);
+          var bodyStart = responseData.indexOf('\r\n\r\n');
+          if (bodyStart === -1) return resolve(responseData);
+          resolve(responseData.slice(bodyStart + 4));
+        });
+        tlsSocket.on('error', function(e) { clearTimeout(timeout); reject(e); });
+        step = 3;
+      }
+    });
+
+    socket.on('error', function(e) { clearTimeout(timeout); reject(e); });
+    socket.on('timeout', function() { clearTimeout(timeout); socket.destroy(); reject(new Error('Socket timeout')); });
+    socket.setTimeout(25000);
+  });
+}
+
+function sendConnect(socket, host, port) {
+  var hostBuf = Buffer.from(host);
+  var buf = Buffer.alloc(7 + hostBuf.length);
+  buf[0] = 0x05; // SOCKS5
+  buf[1] = 0x01; // CONNECT
+  buf[2] = 0x00; // Reserved
+  buf[3] = 0x03; // Domain name
+  buf[4] = hostBuf.length;
+  hostBuf.copy(buf, 5);
+  buf.writeUInt16BE(port, 5 + hostBuf.length);
+  socket.write(buf);
+}
+
+function fetchDirect(url) {
   return new Promise(function(resolve, reject) {
     var options = {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.9',
         'Accept-Encoding': 'identity',
-        'Cache-Control': 'no-cache',
-        'Sec-Fetch-Dest': 'document',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'none',
       }
     };
-
-    function doRequest(reqUrl, redirects) {
-      if (redirects > 5) return reject(new Error('Too many redirects'));
-      https.get(reqUrl, options, function(res) {
+    function doReq(u, redir) {
+      if (redir > 5) return reject(new Error('Too many redirects'));
+      https.get(u, options, function(res) {
         if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
           var loc = res.headers.location;
           if (loc.startsWith('/')) loc = 'https://www.instagram.com' + loc;
-          return doRequest(loc, redirects + 1);
+          return doReq(loc, redir + 1);
         }
-        if (res.statusCode === 429) return reject(new Error('Rate limited'));
-        var data = '';
-        res.on('data', function(chunk) { data += chunk; });
-        res.on('end', function() { resolve(data); });
+        var d = '';
+        res.on('data', function(c) { d += c; });
+        res.on('end', function() { resolve(d); });
         res.on('error', reject);
       }).on('error', reject);
     }
-
-    doRequest(url, 0);
+    doReq(url, 0);
   });
 }
 
-function fetchJson(url) {
-  return fetchPage(url).then(function(text) {
-    return JSON.parse(text);
-  });
-}
-
-function parseMetricValue(str) {
+function parseNum(str) {
   if (!str) return 0;
   str = str.replace(/,/g, '').trim();
   var multipliers = { k: 1000, m: 1000000 };
