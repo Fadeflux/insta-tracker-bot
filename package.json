@@ -1,0 +1,23 @@
+﻿{
+  "name": "insta-tracker-bot",
+  "version": "1.0.0",
+  "description": "Discord bot for tracking Instagram post performance",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "db:init": "node src/db/init.js",
+    "deploy-commands": "node src/bot/deploy-commands.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.14.1",
+    "pg": "^8.12.0",
+    "bullmq": "^5.12.0",
+    "ioredis": "^5.3.2",
+    "playwright": "^1.42.0",
+    "node-cron": "^3.0.3",
+    "winston": "^3.11.0",
+    "dotenv": "^16.4.5",
+    "json2csv": "^6.0.0-alpha.2"
+  }
+}
