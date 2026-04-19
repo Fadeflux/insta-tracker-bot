@@ -5,7 +5,6 @@ var db = require('../db/queries');
 
 var DASHBOARD_USERS = {};
 
-// Load users from env: DASHBOARD_USERS=user1:pass1,user2:pass2
 function loadUsers() {
   var raw = process.env.DASHBOARD_USERS || 'admin:admin123';
   var pairs = raw.split(',');
@@ -21,8 +20,6 @@ function loadUsers() {
 function checkAuth(req, res, next) {
   var token = req.headers['x-auth-token'] || req.query.token;
   if (!token) return res.status(401).json({ error: 'No token' });
-
-  // Token format: base64(username:password)
   try {
     var decoded = Buffer.from(token, 'base64').toString();
     var parts = decoded.split(':');
@@ -39,7 +36,6 @@ function createWebServer() {
   var app = express();
   app.use(express.json());
 
-  // Login endpoint
   app.post('/api/login', function(req, res) {
     var username = req.body.username;
     var password = req.body.password;
@@ -50,7 +46,6 @@ function createWebServer() {
     return res.status(401).json({ error: 'Invalid credentials' });
   });
 
-  // API: Today stats
   app.get('/api/today', checkAuth, async function(req, res) {
     try {
       var today = new Date().toISOString().split('T')[0];
@@ -58,40 +53,32 @@ function createWebServer() {
       var summaries = await db.getDailySummaries(today);
       var activePosts = await db.getActivePosts();
       res.json({ date: today, summaries: summaries, activePosts: activePosts.length });
-    } catch(err) {
-      res.status(500).json({ error: err.message });
-    }
+    } catch(err) { res.status(500).json({ error: err.message }); }
   });
 
-  // API: Specific date stats
   app.get('/api/stats/:date', checkAuth, async function(req, res) {
     try {
       var date = req.params.date;
       await db.computeDailySummary(date);
       var summaries = await db.getDailySummaries(date);
       res.json({ date: date, summaries: summaries });
-    } catch(err) {
-      res.status(500).json({ error: err.message });
-    }
+    } catch(err) { res.status(500).json({ error: err.message }); }
   });
 
-  // API: VA detail
   app.get('/api/va/:discordId', checkAuth, async function(req, res) {
     try {
-      var today = new Date().toISOString().split('T')[0];
-      var posts = await db.getVaPostsToday(req.params.discordId, today);
+      var date = req.query.date || new Date().toISOString().split('T')[0];
+      var posts = await db.getVaPostsToday(req.params.discordId, date);
       var snapshots = [];
       for (var i = 0; i < posts.length; i++) {
         var history = await db.getSnapshotHistory(posts[i].id);
         snapshots.push({ post: posts[i], snapshots: history });
       }
-      res.json({ va_id: req.params.discordId, posts: snapshots });
-    } catch(err) {
-      res.status(500).json({ error: err.message });
-    }
+      var stats = await db.getVaDailyStats(req.params.discordId, date);
+      res.json({ va_id: req.params.discordId, date: date, posts: snapshots, stats: stats });
+    } catch(err) { res.status(500).json({ error: err.message }); }
   });
 
-  // API: History (last N days)
   app.get('/api/history/:days', checkAuth, async function(req, res) {
     try {
       var days = parseInt(req.params.days) || 7;
@@ -100,28 +87,42 @@ function createWebServer() {
         var d = new Date();
         d.setDate(d.getDate() - i);
         var date = d.toISOString().split('T')[0];
+        await db.computeDailySummary(date);
         var summaries = await db.getDailySummaries(date);
         results.push({ date: date, summaries: summaries });
       }
       res.json({ days: days, history: results });
-    } catch(err) {
-      res.status(500).json({ error: err.message });
-    }
+    } catch(err) { res.status(500).json({ error: err.message }); }
   });
 
-  // API: Leaderboard
   app.get('/api/leaderboard', checkAuth, async function(req, res) {
     try {
       var date = req.query.date || new Date().toISOString().split('T')[0];
       await db.computeDailySummary(date);
       var rankings = await db.getLeaderboard(date);
       res.json({ date: date, rankings: rankings });
-    } catch(err) {
-      res.status(500).json({ error: err.message });
-    }
+    } catch(err) { res.status(500).json({ error: err.message }); }
   });
 
-  // Serve dashboard HTML
+  app.get('/api/compare', checkAuth, async function(req, res) {
+    try {
+      var va1 = req.query.va1;
+      var va2 = req.query.va2;
+      var days = parseInt(req.query.days) || 7;
+      var result = { va1: [], va2: [] };
+      for (var i = 0; i < days; i++) {
+        var d = new Date();
+        d.setDate(d.getDate() - i);
+        var date = d.toISOString().split('T')[0];
+        var s1 = await db.getVaDailyStats(va1, date);
+        var s2 = await db.getVaDailyStats(va2, date);
+        result.va1.push({ date: date, stats: s1 || null });
+        result.va2.push({ date: date, stats: s2 || null });
+      }
+      res.json(result);
+    } catch(err) { res.status(500).json({ error: err.message }); }
+  });
+
   app.get('/', function(req, res) {
     res.sendFile(path.join(__dirname, 'dashboard.html'));
   });
