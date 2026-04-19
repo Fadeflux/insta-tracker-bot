@@ -62,8 +62,8 @@ async function initDb() {
 
 if (require.main === module) {
   initDb()
-    .then(() => { console.log('Database initialized'); process.exit(0); })
-    .catch((err) => { console.error('Init failed:', err.message); process.exit(1); });
+    .then(function() { console.log('Database initialized'); process.exit(0); })
+    .catch(function(err) { console.error('Init failed:', err.message); process.exit(1); });
 }
 
 module.exports = { pool, initDb };

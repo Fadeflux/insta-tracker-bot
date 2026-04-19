@@ -4,16 +4,16 @@ const logger = require('../utils/logger');
 const db = require('../db/queries');
 const embeds = require('../utils/embeds');
 
-let discordClient = null;
+var discordClient = null;
 
 function initCronJobs(client) {
   discordClient = client;
 
-  cron.schedule('*/5 * * * *', async () => {
+  cron.schedule('*/5 * * * *', async function() {
     try { await db.endExpiredPosts(); } catch (err) { logger.error('Expiration cron failed', { error: err.message }); }
   });
 
-  cron.schedule('59 23 * * *', async () => {
+  cron.schedule('59 23 * * *', async function() {
     try { await sendDailySummary(); } catch (err) { logger.error('Daily summary cron failed', { error: err.message }); }
   }, { timezone: config.timezone });
 
@@ -21,28 +21,28 @@ function initCronJobs(client) {
 }
 
 async function sendDailySummary() {
-  const today = new Date().toISOString().split('T')[0];
-  const summaries = await db.computeDailySummary(today);
+  var today = new Date().toISOString().split('T')[0];
+  var summaries = await db.computeDailySummary(today);
 
   if (summaries.length === 0) { logger.info('No posts today, skipping'); return; }
-  summaries.sort((a, b) => Number(b.total_views) - Number(a.total_views));
+  summaries.sort(function(a, b) { return Number(b.total_views) - Number(a.total_views); });
 
   try {
-    const resultsChannel = await discordClient.channels.fetch(config.discord.channels.results);
+    var resultsChannel = await discordClient.channels.fetch(config.discord.channels.results);
     if (!resultsChannel) { logger.error('Results channel not found'); return; }
 
     await resultsChannel.send({ content: '# Resultats du ' + today + '\n---' });
 
-    for (let i = 0; i < summaries.length; i++) {
-      const s = summaries[i];
-      const embed = embeds.dailySummaryEmbed(s.va_name, s, i + 1);
+    for (var i = 0; i < summaries.length; i++) {
+      var s = summaries[i];
+      var embed = embeds.dailySummaryEmbed(s.va_name, s, i + 1);
       await resultsChannel.send({ embeds: [embed] });
     }
 
-    const leaderboardEmbed = embeds.leaderboardEmbed(summaries, today);
+    var leaderboardEmbed = embeds.leaderboardEmbed(summaries, today);
     await resultsChannel.send({ embeds: [leaderboardEmbed] });
 
-    const managersChannel = await discordClient.channels.fetch(config.discord.channels.managers);
+    var managersChannel = await discordClient.channels.fetch(config.discord.channels.managers);
     if (managersChannel) {
       await managersChannel.send({ content: '# Rapport fin de journee - ' + today, embeds: [leaderboardEmbed] });
     }
@@ -53,4 +53,4 @@ async function sendDailySummary() {
   }
 }
 
-module.exports = { initCronJobs, sendDailySummary };
+module.exports = { initCronJobs: initCronJobs, sendDailySummary: sendDailySummary };

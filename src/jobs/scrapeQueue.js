@@ -5,18 +5,19 @@ const logger = require('../utils/logger');
 const { scrapePost } = require('../scrapers/instagram');
 const db = require('../db/queries');
 
-const connection = new IORedis(config.redis.url, { maxRetriesPerRequest: null });
+var connection = new IORedis(config.redis.url, { maxRetriesPerRequest: null });
 
-const scrapeQueue = new Queue('scrape', { connection });
-const notifyQueue = new Queue('notify', { connection });
+var scrapeQueue = new Queue('scrape', { connection: connection });
+var notifyQueue = new Queue('notify', { connection: connection });
 
-const scrapeWorker = new Worker(
+var scrapeWorker = new Worker(
   'scrape',
-  async (job) => {
-    const { postId, url } = job.data;
+  async function(job) {
+    var postId = job.data.postId;
+    var url = job.data.url;
     logger.info('Scraping job for post ' + postId + ': ' + url);
 
-    const post = await db.getPost(postId);
+    var post = await db.getPost(postId);
     if (!post || post.status !== 'active') {
       logger.info('Post ' + postId + ' no longer active, skipping');
       return;
@@ -28,8 +29,8 @@ const scrapeWorker = new Worker(
       return;
     }
 
-    const previousSnapshot = await db.getLatestSnapshot(postId);
-    const stats = await scrapePost(url);
+    var previousSnapshot = await db.getLatestSnapshot(postId);
+    var stats = await scrapePost(url);
 
     if (stats.error) {
       await db.insertSnapshot(postId, stats);
@@ -37,43 +38,43 @@ const scrapeWorker = new Worker(
       return;
     }
 
-    const snapshot = await db.insertSnapshot(postId, stats);
+    var snapshot = await db.insertSnapshot(postId, stats);
 
     await notifyQueue.add('hourly-update', {
-      postId,
+      postId: postId,
       currentStats: stats,
       previousStats: previousSnapshot
         ? { views: previousSnapshot.views, likes: previousSnapshot.likes, comments: previousSnapshot.comments, shares: previousSnapshot.shares }
         : null,
     });
 
-    const nextScrape = new Date(Date.now() + 60 * 60 * 1000);
+    var nextScrape = new Date(Date.now() + 60 * 60 * 1000);
     if (nextScrape < new Date(post.tracking_end)) {
-      await scrapeQueue.add('scrape-post', { postId, url }, { delay: 60 * 60 * 1000, jobId: 'scrape-' + postId + '-' + Date.now() });
+      await scrapeQueue.add('scrape-post', { postId: postId, url: url }, { delay: 60 * 60 * 1000, jobId: 'scrape-' + postId + '-' + Date.now() });
     }
 
     return snapshot;
   },
   {
-    connection,
+    connection: connection,
     concurrency: config.scraping.concurrency,
     limiter: { max: 5, duration: 60000 },
   }
 );
 
-scrapeWorker.on('failed', (job, err) => { logger.error('Scrape job failed: ' + job?.id, { error: err.message }); });
-scrapeWorker.on('completed', (job) => { logger.info('Scrape job completed: ' + job.id); });
+scrapeWorker.on('failed', function(job, err) { logger.error('Scrape job failed: ' + (job ? job.id : ''), { error: err.message }); });
+scrapeWorker.on('completed', function(job) { logger.info('Scrape job completed: ' + job.id); });
 
 async function scheduleInitialScrape(postId, url) {
-  await scrapeQueue.add('scrape-post', { postId, url }, { jobId: 'scrape-' + postId + '-initial', delay: 5000 });
+  await scrapeQueue.add('scrape-post', { postId: postId, url: url }, { jobId: 'scrape-' + postId + '-initial', delay: 5000 });
   logger.info('Scheduled initial scrape for post ' + postId);
 }
 
 async function getQueueStats() {
-  const waiting = await scrapeQueue.getWaitingCount();
-  const active = await scrapeQueue.getActiveCount();
-  const delayed = await scrapeQueue.getDelayedCount();
-  return { waiting, active, delayed };
+  var waiting = await scrapeQueue.getWaitingCount();
+  var active = await scrapeQueue.getActiveCount();
+  var delayed = await scrapeQueue.getDelayedCount();
+  return { waiting: waiting, active: active, delayed: delayed };
 }
 
-module.exports = { scrapeQueue, notifyQueue, scrapeWorker, scheduleInitialScrape, getQueueStats };
+module.exports = { scrapeQueue: scrapeQueue, notifyQueue: notifyQueue, scrapeWorker: scrapeWorker, scheduleInitialScrape: scheduleInitialScrape, getQueueStats: getQueueStats };
