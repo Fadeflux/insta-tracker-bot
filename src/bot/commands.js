@@ -1,4 +1,4 @@
-﻿const { SlashCommandBuilder } = require('discord.js');
+const { SlashCommandBuilder } = require('discord.js');
 const db = require('../db/queries');
 const embeds = require('../utils/embeds');
 const { getQueueStats } = require('../jobs/scrapeQueue');

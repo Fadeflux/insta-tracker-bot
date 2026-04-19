@@ -1,4 +1,4 @@
-﻿const config = require('../../config');
+const config = require('../../config');
 const logger = require('../utils/logger');
 const { isInstagramPostUrl, extractInstagramUrls, extractPostId, normalizeUrl } = require('../utils/instagram');
 const db = require('../db/queries');

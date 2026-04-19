@@ -1,4 +1,4 @@
-﻿function extractPostId(url) {
+function extractPostId(url) {
   const patterns = [
     /instagram\.com\/(?:p|reel|tv)\/([A-Za-z0-9_-]+)/,
     /instagr\.am\/(?:p|reel|tv)\/([A-Za-z0-9_-]+)/,

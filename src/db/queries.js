@@ -1,4 +1,4 @@
-﻿const { pool } = require('./init');
+const { pool } = require('./init');
 const logger = require('../utils/logger');
 
 async function insertPost({ igPostId, url, vaDiscordId, vaName }) {

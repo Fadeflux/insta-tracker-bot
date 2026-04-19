@@ -1,4 +1,4 @@
-﻿const { Pool } = require('pg');
+const { Pool } = require('pg');
 const config = require('../../config');
 const logger = require('../utils/logger');
 

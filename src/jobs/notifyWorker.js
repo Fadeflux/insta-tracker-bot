@@ -1,4 +1,4 @@
-﻿const { Worker } = require('bullmq');
+const { Worker } = require('bullmq');
 const IORedis = require('ioredis');
 const config = require('../../config');
 const logger = require('../utils/logger');

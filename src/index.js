@@ -1,4 +1,4 @@
-﻿const { Client, GatewayIntentBits, Partials } = require('discord.js');
+const { Client, GatewayIntentBits, Partials } = require('discord.js');
 const config = require('../config');
 const logger = require('./utils/logger');
 const { initDb } = require('./db/init');

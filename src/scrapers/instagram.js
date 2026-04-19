@@ -1,4 +1,4 @@
-﻿const { chromium } = require('playwright');
+const { chromium } = require('playwright');
 const logger = require('../utils/logger');
 const config = require('../../config');
 
