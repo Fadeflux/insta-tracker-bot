@@ -1,12 +1,18 @@
-const { Client, GatewayIntentBits, Partials } = require('discord.js');
-const config = require('../config');
-const logger = require('./utils/logger');
-const { initDb } = require('./db/init');
-const { handleMessage } = require('./bot/messageHandler');
-const { handleCommand } = require('./bot/commands');
-const { initCronJobs } = require('./jobs/cron');
-const { setDiscordClient, createNotifyWorker } = require('./jobs/notifyWorker');
-const { initBrowser, closeBrowser } = require('./scrapers/instagram');
+var config = require('../config');
+console.log('Config loaded OK');
+console.log('Token exists:', !!config.discord.token);
+console.log('DB URL exists:', !!config.db.url);
+console.log('Redis URL exists:', !!config.redis.url);
+
+var { Client, GatewayIntentBits, Partials } = require('discord.js');
+console.log('Discord.js loaded OK');
+
+var { initDb } = require('./db/init');
+var { handleMessage } = require('./bot/messageHandler');
+var { handleCommand } = require('./bot/commands');
+var { initCronJobs } = require('./jobs/cron');
+var { setDiscordClient, createNotifyWorker } = require('./jobs/notifyWorker');
+console.log('All modules loaded OK');
 
 var client = new Client({
   intents: [
@@ -19,44 +25,37 @@ var client = new Client({
 });
 
 client.once('ready', async function() {
-  logger.info('Bot connected as ' + client.user.tag);
-  logger.info('Serving guild: ' + config.discord.guildId);
+  console.log('Bot connected as ' + client.user.tag);
   setDiscordClient(client);
   createNotifyWorker();
   initCronJobs(client);
-  await initBrowser();
-  logger.info('All systems operational');
+  console.log('All systems operational');
 });
 
 client.on('messageCreate', async function(message) {
-  try { await handleMessage(message); } catch (err) { logger.error('Message handler error', { error: err.message, stack: err.stack }); }
+  try { await handleMessage(message); } catch (err) { console.error('Message error', err); }
 });
 
 client.on('interactionCreate', async function(interaction) {
   if (!interaction.isChatInputCommand()) return;
-  try { await handleCommand(interaction); } catch (err) { logger.error('Command handler error', { error: err.message, stack: err.stack }); }
+  try { await handleCommand(interaction); } catch (err) { console.error('Command error', err); }
 });
 
-client.on('error', function(err) { logger.error('Discord client error', { error: err.message }); });
+client.on('error', function(err) { console.error('Discord error', err); });
 
 async function start() {
   try {
+    console.log('Initializing database...');
     await initDb();
-    logger.info('Database ready');
+    console.log('Database ready');
+    console.log('Logging in to Discord...');
     await client.login(config.discord.token);
   } catch (err) {
-    logger.error('Startup failed', { error: err.message });
+    console.error('Startup failed:', err);
     process.exit(1);
   }
 }
 
-async function shutdown(signal) {
-  logger.info(signal + ' received, shutting down...');
-  try { await closeBrowser(); client.destroy(); process.exit(0); } catch(e) { process.exit(1); }
-}
-
-process.on('SIGINT', function() { shutdown('SIGINT'); });
-process.on('SIGTERM', function() { shutdown('SIGTERM'); });
-process.on('unhandledRejection', function(err) { logger.error('Unhandled rejection', { error: err ? err.message : '', stack: err ? err.stack : '' }); });
+process.on('unhandledRejection', function(err) { console.error('Unhandled rejection:', err); });
 
 start();
