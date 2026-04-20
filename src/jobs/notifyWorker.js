@@ -24,34 +24,20 @@ function createNotifyWorker() {
       if (!post) return;
 
       try {
-        var managersChannel = await discordClient.channels.fetch(config.discord.channels.managers);
-        if (!managersChannel) { logger.error('Managers channel not found'); return; }
-
-        if (job.name === 'new-post') {
-          var embed = embeds.newPostEmbed(post, currentStats);
-          var msg = await managersChannel.send({ embeds: [embed] });
-          await db.setManagerMsgId(post.id, msg.id);
-          logger.info('Sent new post notification for post ' + postId);
-        } else if (job.name === 'hourly-update') {
-          var embed2 = embeds.hourlyUpdateEmbed(post, currentStats, previousStats);
-          await managersChannel.send({ embeds: [embed2] });
-          logger.info('Sent hourly update for post ' + postId);
-
-          // Check if post just went viral
+        // Only send viral alerts - no more hourly/new post notifications
+        if (job.name === 'hourly-update') {
           var VIRAL = parseInt(process.env.VIRAL_VIEWS || '5000');
           var prevViews = previousStats ? previousStats.views : 0;
           if (currentStats.views >= VIRAL && prevViews < VIRAL) {
             var viralEmbed = embeds.viralAlertEmbed(post, currentStats);
-            await managersChannel.send({ embeds: [viralEmbed] });
 
-            // Also send to alerts channel
             try {
               var alertsChannel = await discordClient.channels.fetch(config.discord.channels.alerts);
               if (alertsChannel) {
                 await alertsChannel.send({ embeds: [viralEmbed] });
               }
             } catch(e) {
-              logger.warn('Could not send viral alert to alerts channel: ' + e.message);
+              logger.warn('Could not send viral alert: ' + e.message);
             }
 
             logger.info('VIRAL ALERT sent for post ' + postId + ' (' + currentStats.views + ' views)');
