@@ -29,7 +29,7 @@ async function scrapePost(url) {
   var ua = getRandomUA();
 
   try {
-    // === STRATEGY 1: Embed with /captioned/ (more data) ===
+    // === STRATEGY 1: Embed with /captioned/ ===
     var embedUrl = 'https://www.instagram.com/p/' + postId + '/embed/captioned/';
     var embedHtml = '';
     try {
@@ -50,7 +50,28 @@ async function scrapePost(url) {
       extractFromScripts(embedHtml, result);
     }
 
-    // === STRATEGY 2: GraphQL query endpoint ===
+    // === STRATEGY 2: Always try main/reel page to get better view count ===
+    var mainResult = { views: 0, likes: 0, comments: 0, shares: 0 };
+    try {
+      var mainUrl = 'https://www.instagram.com/' + (isReel ? 'reel' : 'p') + '/' + postId + '/';
+      var mainHtml = await fetchViaProxy(mainUrl, ua);
+      console.log('Main via proxy length: ' + mainHtml.length);
+      if (mainHtml.length > 0) {
+        extractFromHtml(mainHtml, mainResult);
+        extractFromScripts(mainHtml, mainResult);
+        extractFromOgMeta(mainHtml, mainResult);
+      }
+    } catch(e) {
+      console.log('Main page fetch failed: ' + e.message);
+    }
+
+    // Keep the highest values from both sources
+    if (mainResult.views > result.views) result.views = mainResult.views;
+    if (mainResult.likes > result.likes) result.likes = mainResult.likes;
+    if (mainResult.comments > result.comments) result.comments = mainResult.comments;
+    if (mainResult.shares > result.shares) result.shares = mainResult.shares;
+
+    // === STRATEGY 3: GraphQL query endpoint (if still missing data) ===
     if (result.likes === 0 && result.views === 0) {
       try {
         var gqlUrl = 'https://www.instagram.com/graphql/query/?query_hash=b3055c01b4b222b8a47dc12b090e4e64&variables=' +
@@ -66,8 +87,8 @@ async function scrapePost(url) {
                 result.likes = media.edge_media_preview_like.count || 0;
               if (media.edge_media_to_comment && result.comments === 0)
                 result.comments = media.edge_media_to_comment.count || 0;
-              if (media.video_view_count != null && result.views === 0)
-                result.views = media.video_view_count || 0;
+              if (media.video_view_count != null && media.video_view_count > result.views)
+                result.views = media.video_view_count;
               if (media.edge_media_preview_comment && result.comments === 0)
                 result.comments = media.edge_media_preview_comment.count || 0;
               console.log('GraphQL parsed OK for ' + postId);
@@ -81,7 +102,7 @@ async function scrapePost(url) {
       }
     }
 
-    // === STRATEGY 3: ?__a=1&__d=dis JSON endpoint ===
+    // === STRATEGY 4: ?__a=1&__d=dis JSON endpoint ===
     if (result.likes === 0 && result.views === 0) {
       try {
         var aUrl = 'https://www.instagram.com/' + (isReel ? 'reel' : 'p') + '/' + postId + '/?__a=1&__d=dis';
@@ -93,10 +114,10 @@ async function scrapePost(url) {
             var items = aJson.items || (aJson.graphql && aJson.graphql.shortcode_media ? [aJson.graphql.shortcode_media] : []);
             if (items.length > 0) {
               var item = items[0];
-              if (item.like_count != null && result.likes === 0) result.likes = item.like_count;
-              if (item.comment_count != null && result.comments === 0) result.comments = item.comment_count;
-              if (item.play_count != null && result.views === 0) result.views = item.play_count;
-              if (item.view_count != null && result.views === 0) result.views = item.view_count;
+              if (item.like_count != null && item.like_count > result.likes) result.likes = item.like_count;
+              if (item.comment_count != null && item.comment_count > result.comments) result.comments = item.comment_count;
+              if (item.play_count != null && item.play_count > result.views) result.views = item.play_count;
+              if (item.view_count != null && item.view_count > result.views) result.views = item.view_count;
               console.log('__a=1 parsed OK for ' + postId);
             }
           } catch(pe2) {
@@ -108,43 +129,7 @@ async function scrapePost(url) {
       }
     }
 
-    // === STRATEGY 4: Main page with full browser headers ===
-    if (result.likes === 0 && result.views === 0) {
-      var mainUrl = 'https://www.instagram.com/' + (isReel ? 'reel' : 'p') + '/' + postId + '/';
-      var mainHtml = '';
-      try {
-        mainHtml = await fetchViaProxy(mainUrl, ua);
-        console.log('Main via proxy length: ' + mainHtml.length);
-      } catch(e2) {
-        try {
-          mainHtml = await fetchDirect(mainUrl, ua);
-          console.log('Main direct length: ' + mainHtml.length);
-        } catch(e3) {
-          console.log('Main fetch failed: ' + e3.message);
-        }
-      }
-
-      if (mainHtml.length > 0) {
-        extractFromHtml(mainHtml, result);
-        extractFromScripts(mainHtml, result);
-        extractFromOgMeta(mainHtml, result);
-      }
-    }
-
-    // === STRATEGY 5: Reel-specific page ===
-    if (result.views === 0 && isReel) {
-      try {
-        var reelUrl = 'https://www.instagram.com/reel/' + postId + '/';
-        var reelHtml = await fetchViaProxy(reelUrl, ua);
-        console.log('Reel via proxy length: ' + reelHtml.length);
-        extractFromHtml(reelHtml, result);
-        extractFromScripts(reelHtml, result);
-      } catch(e3) {
-        console.log('Reel fetch failed: ' + e3.message);
-      }
-    }
-
-    // === STRATEGY 6: Embed without proxy as last resort ===
+    // === STRATEGY 5: Embed without proxy as last resort ===
     if (result.likes === 0 && result.views === 0) {
       try {
         var embedUrl2 = 'https://www.instagram.com/p/' + postId + '/embed/captioned/';
