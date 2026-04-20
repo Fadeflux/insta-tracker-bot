@@ -54,7 +54,6 @@ async function scrapePost(url) {
       console.log('DEBUG EMBED has like_count: ' + embedHtml.includes('like_count'));
       console.log('DEBUG EMBED has play_count: ' + embedHtml.includes('play_count'));
       console.log('DEBUG EMBED has video_view_count: ' + embedHtml.includes('video_view_count'));
-      var vvcIdx = embedHtml.search(/video.{0,3}view.{0,3}count/); if(vvcIdx !== -1) console.log('DEBUG VVC IDX ' + vvcIdx + ' RAW: ' + JSON.stringify(embedHtml.substring(vvcIdx - 5, vvcIdx + 50)));
       console.log('DEBUG EMBED has view_count: ' + embedHtml.includes('view_count'));
       console.log('DEBUG EMBED has edge_media: ' + embedHtml.includes('edge_media'));
       console.log('DEBUG EMBED has EmbeddedMedia: ' + embedHtml.includes('EmbeddedMedia'));
@@ -187,15 +186,18 @@ async function scrapePost(url) {
 // ===== EXTRACTION HELPERS =====
 
 function extractFromHtml(html, result) {
+  // First, try to unescape the HTML to normalize the JSON
+  var unescaped = html.replace(/\\\\"/g, '"').replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+
   // likes
   if (result.likes === 0) {
     var likesPatterns = [
-      /"like_count"\s*:\s*(\d+)/,
-      /"edge_media_preview_like"\s*:\s*\{\s*"count"\s*:\s*(\d+)/,
-      /"edge_liked_by"\s*:\s*\{\s*"count"\s*:\s*(\d+)/,
+      /like_count\\*"?\s*:\s*(\d+)/,
+      /edge_media_preview_like\\*"?\s*:\s*\{?\s*\\*"?count\\*"?\s*:\s*(\d+)/,
+      /edge_liked_by\\*"?\s*:\s*\{?\s*\\*"?count\\*"?\s*:\s*(\d+)/,
     ];
     for (var i = 0; i < likesPatterns.length; i++) {
-      var m = html.match(likesPatterns[i]);
+      var m = unescaped.match(likesPatterns[i]) || html.match(likesPatterns[i]);
       if (m) { result.likes = parseNum(m[1]); break; }
     }
   }
@@ -203,13 +205,13 @@ function extractFromHtml(html, result) {
   // comments
   if (result.comments === 0) {
     var commentsPatterns = [
-      /"comment_count"\s*:\s*(\d+)/,
-      /"edge_media_to_comment"\s*:\s*\{\s*"count"\s*:\s*(\d+)/,
-      /"edge_media_preview_comment"\s*:\s*\{\s*"count"\s*:\s*(\d+)/,
-      /"edge_media_to_parent_comment"\s*:\s*\{\s*"count"\s*:\s*(\d+)/,
+      /comment_count\\*"?\s*:\s*(\d+)/,
+      /edge_media_to_comment\\*"?\s*:\s*\{?\s*\\*"?count\\*"?\s*:\s*(\d+)/,
+      /edge_media_preview_comment\\*"?\s*:\s*\{?\s*\\*"?count\\*"?\s*:\s*(\d+)/,
+      /edge_media_to_parent_comment\\*"?\s*:\s*\{?\s*\\*"?count\\*"?\s*:\s*(\d+)/,
     ];
     for (var j = 0; j < commentsPatterns.length; j++) {
-      var mc = html.match(commentsPatterns[j]);
+      var mc = unescaped.match(commentsPatterns[j]) || html.match(commentsPatterns[j]);
       if (mc) { result.comments = parseNum(mc[1]); break; }
     }
   }
@@ -217,14 +219,14 @@ function extractFromHtml(html, result) {
   // views
   if (result.views === 0) {
     var viewsPatterns = [
-      /"video_view_count"\s*:\s*(\d+)/,
-      /"play_count"\s*:\s*(\d+)/,
-      /"view_count"\s*:\s*(\d+)/,
-      /"video_play_count"\s*:\s*(\d+)/,
-      /"ig_play_count"\s*:\s*(\d+)/,
+      /video_view_count\\*"?\s*:\s*(\d+)/,
+      /play_count\\*"?\s*:\s*(\d+)/,
+      /view_count\\*"?\s*:\s*(\d+)/,
+      /video_play_count\\*"?\s*:\s*(\d+)/,
+      /ig_play_count\\*"?\s*:\s*(\d+)/,
     ];
     for (var k = 0; k < viewsPatterns.length; k++) {
-      var mv = html.match(viewsPatterns[k]);
+      var mv = unescaped.match(viewsPatterns[k]) || html.match(viewsPatterns[k]);
       if (mv) { result.views = parseNum(mv[1]); break; }
     }
   }
@@ -232,11 +234,11 @@ function extractFromHtml(html, result) {
   // shares
   if (result.shares === 0) {
     var sharesPatterns = [
-      /"share_count"\s*:\s*(\d+)/,
-      /"reshare_count"\s*:\s*(\d+)/,
+      /share_count\\*"?\s*:\s*(\d+)/,
+      /reshare_count\\*"?\s*:\s*(\d+)/,
     ];
     for (var s = 0; s < sharesPatterns.length; s++) {
-      var ms = html.match(sharesPatterns[s]);
+      var ms = unescaped.match(sharesPatterns[s]) || html.match(sharesPatterns[s]);
       if (ms) { result.shares = parseNum(ms[1]); break; }
     }
   }
