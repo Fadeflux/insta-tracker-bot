@@ -51,6 +51,14 @@ function getPerf(views) {
   return 'flop';
 }
 
+// Advanced score: (engagement_rate × 100) × log(views)
+function calcAdvancedScore(s) {
+  var v = Number(s.views) || 0;
+  if (v <= 1) return 0;
+  var eng = calcEngagement(s);
+  return Math.round((eng * 100) * Math.log10(v) * 100) / 100;
+}
+
 function createWebServer() {
   loadUsers();
   var app = express();
@@ -200,6 +208,47 @@ function createWebServer() {
       bon: parseInt(process.env.BON_VIEWS || '1000'),
       moyen: parseInt(process.env.MOYEN_VIEWS || '300'),
     });
+  });
+
+  // Recommendations endpoint
+  app.get('/api/recommendations', checkAuth, async function(req, res) {
+    try {
+      var date = req.query.date || new Date().toISOString().split('T')[0];
+      await db.computeDailySummary(date);
+      var recs = await db.getRecommendations(date);
+
+      // Add score and engagement to posts
+      recs.postsToRepost = recs.postsToRepost.map(function(p) {
+        p.score = calcScore(p);
+        p.engagement = calcEngagement(p);
+        p.advancedScore = calcAdvancedScore(p);
+        return p;
+      });
+      recs.nuggets = recs.nuggets.map(function(p) {
+        p.score = calcScore(p);
+        p.engagement = calcEngagement(p);
+        p.advancedScore = calcAdvancedScore(p);
+        return p;
+      });
+
+      res.json(recs);
+    } catch(err) { res.status(500).json({ error: err.message }); }
+  });
+
+  // Saved best posts (all time)
+  app.get('/api/saved-posts', checkAuth, async function(req, res) {
+    try {
+      var limit = parseInt(req.query.limit) || 50;
+      var posts = await db.getSavedBestPosts(limit);
+      posts = posts.map(function(p) {
+        p.score = calcScore(p);
+        p.engagement = calcEngagement(p);
+        p.advancedScore = calcAdvancedScore(p);
+        p.perf = getPerf(Number(p.views) || 0);
+        return p;
+      });
+      res.json({ posts: posts });
+    } catch(err) { res.status(500).json({ error: err.message }); }
   });
 
   app.get('/', function(req, res) {
