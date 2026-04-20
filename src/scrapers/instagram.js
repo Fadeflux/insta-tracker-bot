@@ -6,6 +6,7 @@ var PROXY_HOST = process.env.PROXY_HOST || '5.161.16.191';
 var PROXY_PORT = parseInt(process.env.PROXY_PORT || '19751');
 var PROXY_USER = process.env.PROXY_USER || '';
 var PROXY_PASS = process.env.PROXY_PASS || '';
+var VIEW_MULTIPLIER = parseFloat(process.env.VIEW_MULTIPLIER || '2');
 
 // Rotating User-Agents
 var USER_AGENTS = [
@@ -142,6 +143,11 @@ async function scrapePost(url) {
       } catch(e) {
         console.log('Embed direct fallback failed: ' + e.message);
       }
+    }
+
+    // Apply view multiplier to compensate for embed undercount
+    if (result.views > 0 && VIEW_MULTIPLIER !== 1) {
+      result.views = Math.round(result.views * VIEW_MULTIPLIER);
     }
 
     console.log('Final result for ' + postId + ': ' + JSON.stringify(result));
