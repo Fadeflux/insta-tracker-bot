@@ -37,11 +37,25 @@ async function handleMessage(message) {
       continue;
     }
 
+    // Extract caption: text after the URL (on next line or after space)
+    var caption = null;
+    var msgText = message.content;
+    var urlIdx = msgText.indexOf(rawUrl);
+    if (urlIdx !== -1) {
+      var afterUrl = msgText.substring(urlIdx + rawUrl.length).trim();
+      // Remove other URLs
+      afterUrl = afterUrl.replace(/https?:\/\/\S+/g, '').trim();
+      if (afterUrl.length > 0) {
+        caption = afterUrl.substring(0, 500); // max 500 chars
+      }
+    }
+
     var post = await db.insertPost({
       igPostId: igPostId,
       url: url,
       vaDiscordId: message.author.id,
       vaName: (message.member && message.member.displayName) || message.author.username,
+      caption: caption,
     });
 
     if (!post) { logger.warn('Post insert returned null: ' + igPostId); continue; }
