@@ -6,10 +6,10 @@ var VIRAL_VIEWS = parseInt(process.env.VIRAL_VIEWS || '5000');
 var BON_VIEWS = parseInt(process.env.BON_VIEWS || '1000');
 var MOYEN_VIEWS = parseInt(process.env.MOYEN_VIEWS || '300');
 
-async function insertPost({ igPostId, url, vaDiscordId, vaName }) {
+async function insertPost({ igPostId, url, vaDiscordId, vaName, caption }) {
   var postType = url.includes('/reel/') ? 'reel' : 'post';
-  var sql = "INSERT INTO posts (ig_post_id, url, va_discord_id, va_name, post_type, tracking_end) VALUES ($1, $2, $3, $4, $5, (DATE_TRUNC('day', NOW() AT TIME ZONE 'Europe/Paris') + INTERVAL '23 hours 59 minutes') AT TIME ZONE 'Europe/Paris') ON CONFLICT (ig_post_id) DO NOTHING RETURNING *";
-  var result = await pool.query(sql, [igPostId, url, vaDiscordId, vaName, postType]);
+  var sql = "INSERT INTO posts (ig_post_id, url, va_discord_id, va_name, post_type, caption, tracking_end) VALUES ($1, $2, $3, $4, $5, $6, (DATE_TRUNC('day', NOW() AT TIME ZONE 'Europe/Paris') + INTERVAL '23 hours 59 minutes') AT TIME ZONE 'Europe/Paris') ON CONFLICT (ig_post_id) DO NOTHING RETURNING *";
+  var result = await pool.query(sql, [igPostId, url, vaDiscordId, vaName, postType, caption || null]);
   return result.rows[0] || null;
 }
 
@@ -147,11 +147,66 @@ async function getVaPerformanceHistory(vaDiscordId, days) {
 async function checkViralPosts() {
   var sql = "SELECT p.*, s.views, s.likes, s.comments FROM posts p LEFT JOIN LATERAL (SELECT views, likes, comments FROM snapshots sn WHERE sn.post_id = p.id ORDER BY sn.scraped_at DESC LIMIT 1) s ON true WHERE p.status = 'active' AND p.performance != 'viral' AND COALESCE(s.views, 0) >= $1";
   var result = await pool.query(sql, [VIRAL_VIEWS]);
-  // Update them to viral
   for (var i = 0; i < result.rows.length; i++) {
     await pool.query("UPDATE posts SET performance = 'viral' WHERE id = $1", [result.rows[i].id]);
   }
   return result.rows;
+}
+
+// Get saved best posts (to repost) - posts with bon or viral performance
+async function getSavedBestPosts(limit) {
+  var sql = "SELECT p.id, p.ig_post_id, p.url, p.va_name, p.va_discord_id, p.created_at, p.performance, p.caption, s.views, s.likes, s.comments, s.shares FROM posts p LEFT JOIN LATERAL (SELECT views, likes, comments, shares FROM snapshots sn WHERE sn.post_id = p.id ORDER BY sn.scraped_at DESC LIMIT 1) s ON true WHERE p.performance IN ('viral', 'bon') ORDER BY COALESCE(s.views, 0) DESC LIMIT $1";
+  var result = await pool.query(sql, [limit || 50]);
+  return result.rows;
+}
+
+// Get nuggets: high engagement but low views (to scale)
+async function getNuggets(date) {
+  var sql = "SELECT p.id, p.ig_post_id, p.url, p.va_name, p.va_discord_id, p.created_at, p.caption, p.performance, s.views, s.likes, s.comments, s.shares FROM posts p LEFT JOIN LATERAL (SELECT views, likes, comments, shares FROM snapshots sn WHERE sn.post_id = p.id ORDER BY sn.scraped_at DESC LIMIT 1) s ON true WHERE p.created_at::date = $1 AND COALESCE(s.views, 0) > 0 AND COALESCE(s.views, 0) < $2 AND (COALESCE(s.likes, 0) + COALESCE(s.comments, 0))::float / GREATEST(COALESCE(s.views, 0), 1) > 0.01 ORDER BY (COALESCE(s.likes, 0) + COALESCE(s.comments, 0))::float / GREATEST(COALESCE(s.views, 0), 1) DESC";
+  var result = await pool.query(sql, [date, BON_VIEWS]);
+  return result.rows;
+}
+
+// Get recommendations data for a date
+async function getRecommendations(date) {
+  // Posts to repost (bon/viral from today)
+  var repostSql = "SELECT p.id, p.ig_post_id, p.url, p.va_name, p.caption, s.views, s.likes, s.comments, s.shares FROM posts p LEFT JOIN LATERAL (SELECT views, likes, comments, shares FROM snapshots sn WHERE sn.post_id = p.id ORDER BY sn.scraped_at DESC LIMIT 1) s ON true WHERE p.created_at::date = $1 AND COALESCE(s.views, 0) >= $2 ORDER BY COALESCE(s.views, 0) DESC LIMIT 10";
+  var repost = await pool.query(repostSql, [date, BON_VIEWS]);
+
+  // Underperforming VAs (below average)
+  var summaries = await getDailySummaries(date);
+  var totalAvg = 0;
+  if (summaries.length > 0) {
+    var totalViews = summaries.reduce(function(a, b) { return a + Number(b.total_views); }, 0);
+    totalAvg = totalViews / summaries.length;
+  }
+  var underperformers = summaries.filter(function(s) { return Number(s.total_views) < totalAvg * 0.5; });
+  var topPerformers = summaries.filter(function(s) { return Number(s.total_views) >= totalAvg * 1.5; });
+
+  // KPIs
+  var allPostsSql = "SELECT p.id, p.performance, s.views FROM posts p LEFT JOIN LATERAL (SELECT views FROM snapshots sn WHERE sn.post_id = p.id ORDER BY sn.scraped_at DESC LIMIT 1) s ON true WHERE p.created_at::date = $1";
+  var allPosts = await pool.query(allPostsSql, [date]);
+  var totalPosts = allPosts.rows.length;
+  var perfCount = { viral: 0, bon: 0, moyen: 0, flop: 0 };
+  allPosts.rows.forEach(function(p) {
+    var v = Number(p.views) || 0;
+    var perf = v >= VIRAL_VIEWS ? 'viral' : v >= BON_VIEWS ? 'bon' : v >= MOYEN_VIEWS ? 'moyen' : 'flop';
+    perfCount[perf]++;
+  });
+  var pctPerf = totalPosts > 0 ? Math.round((perfCount.viral + perfCount.bon) / totalPosts * 100) : 0;
+  var pctFlop = totalPosts > 0 ? Math.round(perfCount.flop / totalPosts * 100) : 0;
+  var toRepost = perfCount.viral + perfCount.bon;
+
+  // Nuggets
+  var nuggets = await getNuggets(date);
+
+  return {
+    postsToRepost: repost.rows,
+    nuggets: nuggets,
+    underperformers: underperformers,
+    topPerformers: topPerformers,
+    kpis: { totalPosts: totalPosts, perfCount: perfCount, pctPerf: pctPerf, pctFlop: pctFlop, toRepost: toRepost },
+  };
 }
 
 module.exports = {
@@ -162,6 +217,6 @@ module.exports = {
   computeDailySummary, getDailySummaries, getVaDailyStats, getVaPostsToday,
   getLeaderboard, endExpiredPosts, getPostsForExport,
   getTopPostsWithPerformance, getVaPerformanceHistory, checkViralPosts,
-  updatePostPerformance,
+  updatePostPerformance, getSavedBestPosts, getNuggets, getRecommendations,
   VIRAL_VIEWS, BON_VIEWS, MOYEN_VIEWS,
 };
