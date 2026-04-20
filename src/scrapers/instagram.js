@@ -54,6 +54,7 @@ async function scrapePost(url) {
       console.log('DEBUG EMBED has like_count: ' + embedHtml.includes('like_count'));
       console.log('DEBUG EMBED has play_count: ' + embedHtml.includes('play_count'));
       console.log('DEBUG EMBED has video_view_count: ' + embedHtml.includes('video_view_count'));
+      var vvcIdx = embedHtml.search(/video.{0,3}view.{0,3}count/); if(vvcIdx !== -1) console.log('DEBUG VVC IDX ' + vvcIdx + ' RAW: ' + JSON.stringify(embedHtml.substring(vvcIdx - 5, vvcIdx + 50)));
       console.log('DEBUG EMBED has view_count: ' + embedHtml.includes('view_count'));
       console.log('DEBUG EMBED has edge_media: ' + embedHtml.includes('edge_media'));
       console.log('DEBUG EMBED has EmbeddedMedia: ' + embedHtml.includes('EmbeddedMedia'));
