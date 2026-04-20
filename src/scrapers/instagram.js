@@ -46,21 +46,8 @@ async function scrapePost(url) {
     }
 
     if (embedHtml.length > 0) {
-      var hasLoginWall = embedHtml.includes('loginAndSignup') || embedHtml.includes('log_in_to_see');
-      if (hasLoginWall) {
-        console.log('DEBUG EMBED LOGIN WALL for ' + postId);
-      }
-      // DEBUG: log key patterns found in embed
-      console.log('DEBUG EMBED has like_count: ' + embedHtml.includes('like_count'));
-      console.log('DEBUG EMBED has play_count: ' + embedHtml.includes('play_count'));
-      console.log('DEBUG EMBED has video_view_count: ' + embedHtml.includes('video_view_count'));
-      console.log('DEBUG EMBED has view_count: ' + embedHtml.includes('view_count'));
-      console.log('DEBUG EMBED has edge_media: ' + embedHtml.includes('edge_media'));
-      console.log('DEBUG EMBED has EmbeddedMedia: ' + embedHtml.includes('EmbeddedMedia'));
-      console.log('DEBUG EMBED first 300: ' + embedHtml.substring(0, 300).replace(/\n/g, ' '));
       extractFromHtml(embedHtml, result);
       extractFromScripts(embedHtml, result);
-      console.log('DEBUG after embed extract: ' + JSON.stringify(result));
     }
 
     // === STRATEGY 2: GraphQL query endpoint ===
@@ -70,7 +57,6 @@ async function scrapePost(url) {
           encodeURIComponent(JSON.stringify({ shortcode: postId, child_comment_count: 0, fetch_comment_count: 0, parent_comment_count: 0, has_threaded_comments: false }));
         var gqlData = await fetchViaProxy(gqlUrl, ua);
         console.log('GraphQL length: ' + gqlData.length);
-        console.log('DEBUG GQL first 300: ' + gqlData.substring(0, 300).replace(/\n/g, ' '));
         if (gqlData.length > 0 && gqlData.trimStart()[0] === '{') {
           try {
             var gqlJson = JSON.parse(gqlData.trim());
@@ -101,7 +87,6 @@ async function scrapePost(url) {
         var aUrl = 'https://www.instagram.com/' + (isReel ? 'reel' : 'p') + '/' + postId + '/?__a=1&__d=dis';
         var aData = await fetchViaProxy(aUrl, ua);
         console.log('__a=1 length: ' + aData.length);
-        console.log('DEBUG __a=1 first 300: ' + aData.substring(0, 300).replace(/\n/g, ' '));
         if (aData.length > 0 && aData.trimStart()[0] === '{') {
           try {
             var aJson = JSON.parse(aData.trim());
