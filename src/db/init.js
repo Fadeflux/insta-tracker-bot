@@ -15,11 +15,7 @@ CREATE TABLE IF NOT EXISTS posts (
   tracking_end  TIMESTAMPTZ,
   status        VARCHAR(16) NOT NULL DEFAULT 'active'
     CHECK (status IN ('active', 'ended', 'error')),
-  manager_msg_id VARCHAR(32),
-  caption       TEXT,
-  post_type     VARCHAR(16) DEFAULT 'reel',
-  performance   VARCHAR(16) DEFAULT 'pending'
-    CHECK (performance IN ('pending', 'viral', 'bon', 'moyen', 'flop'))
+  manager_msg_id VARCHAR(32)
 );
 
 CREATE TABLE IF NOT EXISTS snapshots (
@@ -49,7 +45,6 @@ CREATE TABLE IF NOT EXISTS daily_summaries (
 CREATE INDEX IF NOT EXISTS idx_posts_status ON posts(status);
 CREATE INDEX IF NOT EXISTS idx_posts_va ON posts(va_discord_id);
 CREATE INDEX IF NOT EXISTS idx_posts_created ON posts(created_at);
-CREATE INDEX IF NOT EXISTS idx_posts_perf ON posts(performance);
 CREATE INDEX IF NOT EXISTS idx_snapshots_post ON snapshots(post_id);
 CREATE INDEX IF NOT EXISTS idx_snapshots_time ON snapshots(scraped_at);
 CREATE INDEX IF NOT EXISTS idx_daily_date ON daily_summaries(date);
@@ -67,6 +62,8 @@ DO $$ BEGIN
     ALTER TABLE posts ADD COLUMN performance VARCHAR(16) DEFAULT 'pending';
   END IF;
 END $$;
+
+CREATE INDEX IF NOT EXISTS idx_posts_perf ON posts(performance);
 `;
 
 async function initDb() {
