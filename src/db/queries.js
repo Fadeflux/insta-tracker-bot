@@ -160,10 +160,10 @@ async function getSavedBestPosts(limit) {
   return result.rows;
 }
 
-// Get nuggets: high engagement but low views (to scale)
+// Get nuggets: top posts by views (best performers to scale/repost)
 async function getNuggets(date) {
-  var sql = "SELECT p.id, p.ig_post_id, p.url, p.va_name, p.va_discord_id, p.created_at, p.caption, p.performance, s.views, s.likes, s.comments, s.shares FROM posts p LEFT JOIN LATERAL (SELECT views, likes, comments, shares FROM snapshots sn WHERE sn.post_id = p.id ORDER BY sn.scraped_at DESC LIMIT 1) s ON true WHERE p.created_at::date = $1 AND COALESCE(s.views, 0) > 0 AND COALESCE(s.views, 0) < $2 AND (COALESCE(s.likes, 0) + COALESCE(s.comments, 0))::float / GREATEST(COALESCE(s.views, 0), 1) > 0.01 ORDER BY (COALESCE(s.likes, 0) + COALESCE(s.comments, 0))::float / GREATEST(COALESCE(s.views, 0), 1) DESC";
-  var result = await pool.query(sql, [date, BON_VIEWS]);
+  var sql = "SELECT p.id, p.ig_post_id, p.url, p.va_name, p.va_discord_id, p.created_at, p.caption, p.performance, s.views, s.likes, s.comments, s.shares FROM posts p LEFT JOIN LATERAL (SELECT views, likes, comments, shares FROM snapshots sn WHERE sn.post_id = p.id ORDER BY sn.scraped_at DESC LIMIT 1) s ON true WHERE p.created_at::date = $1 AND COALESCE(s.views, 0) > 0 ORDER BY COALESCE(s.views, 0) DESC LIMIT 15";
+  var result = await pool.query(sql, [date]);
   return result.rows;
 }
 
