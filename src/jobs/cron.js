@@ -126,19 +126,7 @@ async function sendDailySummary() {
     var resultsChannel = await discordClient.channels.fetch(config.discord.channels.results);
     if (!resultsChannel) return;
 
-    // Header
-    await resultsChannel.send({
-      content: '# ?? Resultats du ' + today + '\n??????????????????????????'
-    });
-
-    // Individual VA results
-    for (var i = 0; i < summaries.length; i++) {
-      var s = summaries[i];
-      var embed = embeds.dailySummaryEmbed(s.va_name, s, i + 1);
-      await resultsChannel.send({ embeds: [embed] });
-    }
-
-    // Leaderboard
+    // Only send the leaderboard — clean and simple
     var leaderboardEmbed = embeds.leaderboardEmbed(summaries, today);
     await resultsChannel.send({ embeds: [leaderboardEmbed] });
 
@@ -157,7 +145,6 @@ async function sendDailySummary() {
       }
     }
 
-    // Also check VAs who posted but aren't in summaries
     var summaryIds = summaries.map(function(s) { return s.va_discord_id; });
     for (var member2 of vaMembers.values()) {
       if (summaryIds.indexOf(member2.id) === -1) {
@@ -168,22 +155,19 @@ async function sendDailySummary() {
       }
     }
 
+    // Send missing posts to ALERTS channel instead of results
     if (lateVAs.length > 0) {
-      var missingEmbed = embeds.missingPostsEmbed(lateVAs, today);
-      await resultsChannel.send({ embeds: [missingEmbed] });
-    } else {
-      var allMetEmbed = embeds.allPostsMetEmbed(today);
-      await resultsChannel.send({ embeds: [allMetEmbed] });
-    }
-
-    // Also send to managers
-    var managersChannel = await discordClient.channels.fetch(config.discord.channels.managers);
-    if (managersChannel) {
-      await managersChannel.send({ content: '# ?? Rapport fin de journee ? ' + today, embeds: [leaderboardEmbed] });
-      if (lateVAs.length > 0) {
-        var missingEmbed2 = embeds.missingPostsEmbed(lateVAs, today);
-        await managersChannel.send({ embeds: [missingEmbed2] });
+      try {
+        var alertsChannel = await discordClient.channels.fetch(config.discord.channels.alerts);
+        if (alertsChannel) {
+          var missingEmbed = embeds.missingPostsEmbed(lateVAs, today);
+          await alertsChannel.send({ embeds: [missingEmbed] });
+        }
+      } catch(e) {
+        console.error('Failed to send missing posts to alerts', e.message);
       }
+    } else {
+      await resultsChannel.send({ embeds: [embeds.allPostsMetEmbed(today)] });
     }
 
     console.log('Daily summary sent: ' + summaries.length + ' VAs, ' + lateVAs.length + ' late');
