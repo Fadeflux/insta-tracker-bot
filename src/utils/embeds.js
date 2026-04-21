@@ -1,7 +1,8 @@
 var { EmbedBuilder } = require('discord.js');
 
 var COLORS = {
-  primary: 0xe1306c,
+  instagram: 0xe1306c,
+  twitter: 0x1da1f2,
   success: 0x2ecc71,
   warning: 0xf39c12,
   error: 0xe74c3c,
@@ -13,12 +14,22 @@ var COLORS = {
   viral: 0xff00ff,
 };
 
-// Performance score: likes + comments*3 + shares*5
+function getPlatformColor(platform) {
+  return platform === 'twitter' ? COLORS.twitter : COLORS.instagram;
+}
+
+function getPlatformEmoji(platform) {
+  return platform === 'twitter' ? '🐦' : '📸';
+}
+
+function getPlatformLabel(platform) {
+  return platform === 'twitter' ? 'Twitter/X' : 'Instagram';
+}
+
 function calcScore(stats) {
   return (stats.likes || 0) + (stats.comments || 0) * 3 + (stats.shares || 0) * 5;
 }
 
-// Engagement rate: (likes + comments) / views
 function calcEngagement(stats) {
   if (!stats.views || stats.views === 0) return 0;
   return ((stats.likes || 0) + (stats.comments || 0)) / stats.views;
@@ -41,149 +52,17 @@ function getVaBadge(totalViews, postCount) {
   return '📉 Faible';
 }
 
-function newPostEmbed(post, stats) {
-  var score = calcScore(stats);
-  var engagement = calcEngagement(stats);
-  var perf = getPerformanceLabel(stats.views || 0);
-
-  return new EmbedBuilder()
-    .setColor(perf.color)
-    .setTitle('New post detected')
-    .addFields(
-      { name: 'VA', value: post.va_name, inline: true },
-      { name: 'Post ID', value: post.ig_post_id || 'N/A', inline: true },
-      { name: 'Heure', value: '<t:' + Math.floor(new Date(post.created_at).getTime() / 1000) + ':R>', inline: true },
-      { name: 'Lien', value: post.url },
-      { name: 'Stats initiales', value: formatStats(stats) },
-      { name: 'Score', value: '🏆 ' + fmt(score), inline: true },
-      { name: 'Engagement', value: '📊 ' + (engagement * 100).toFixed(1) + '%', inline: true },
-    )
-    .setTimestamp();
-}
-
-function hourlyUpdateEmbed(post, currentStats, previousStats) {
-  var diff = computeDiff(currentStats, previousStats);
-  var score = calcScore(currentStats);
-  var engagement = calcEngagement(currentStats);
-  var perf = getPerformanceLabel(currentStats.views || 0);
-
-  return new EmbedBuilder()
-    .setColor(perf.color)
-    .setTitle(perf.emoji + ' Mise a jour horaire - ' + perf.label)
-    .addFields(
-      { name: 'VA', value: post.va_name, inline: true },
-      { name: 'Post ID', value: post.ig_post_id || 'N/A', inline: true },
-      { name: 'Lien', value: post.url },
-      { name: 'Stats actuelles', value: formatStats(currentStats), inline: true },
-      { name: 'Evolution (+/-)', value: formatDiff(diff), inline: true },
-      { name: 'Performance', value: perf.emoji + ' ' + perf.label + ' | 🏆 Score: ' + fmt(score) + ' | 📊 Engagement: ' + (engagement * 100).toFixed(1) + '%' },
-    )
-    .setTimestamp();
-}
-
-function viralAlertEmbed(post, stats) {
-  var score = calcScore(stats);
-  return new EmbedBuilder()
-    .setColor(COLORS.viral)
-    .setTitle('🔥🔥🔥 POST VIRAL DETECTE ! 🔥🔥🔥')
-    .setDescription('Le post de **' + post.va_name + '** vient de passer le seuil viral !')
-    .addFields(
-      { name: 'VA', value: post.va_name, inline: true },
-      { name: 'Post ID', value: post.ig_post_id || 'N/A', inline: true },
-      { name: 'Lien', value: post.url },
-      { name: 'Stats', value: formatStats(stats) },
-      { name: 'Score', value: '🏆 ' + fmt(score), inline: true },
-      { name: 'Engagement', value: '📊 ' + (calcEngagement(stats) * 100).toFixed(1) + '%', inline: true },
-    )
-    .setTimestamp();
-}
-
-function dailySummaryEmbed(vaName, summary, rank) {
-  var medals = { 1: '🥇', 2: '🥈', 3: '🥉' };
-  var medal = medals[rank] || '#' + rank;
-  var rankColors = { 1: COLORS.gold, 2: COLORS.silver, 3: COLORS.bronze };
-  var color = rankColors[rank] || COLORS.neutral;
-
-  var postStatus = Number(summary.post_count) >= 6 ? '✅' : '⚠️';
-  var totalViews = Number(summary.total_views);
-  var totalLikes = Number(summary.total_likes);
-  var totalComments = Number(summary.total_comments);
-  var badge = getVaBadge(totalViews, Number(summary.post_count));
-
-  var avgScore = Number(summary.post_count) > 0
-    ? Math.round((totalLikes + totalComments * 3) / Number(summary.post_count))
-    : 0;
-
-  var engRate = totalViews > 0 ? ((totalLikes + totalComments) / totalViews * 100).toFixed(1) : '0.0';
-
-  return new EmbedBuilder()
-    .setColor(color)
-    .setTitle(medal + ' ' + vaName + ' ' + badge)
-    .addFields(
-      { name: 'Posts', value: postStatus + ' ' + summary.post_count + '/6', inline: true },
-      { name: '👁️ Vues totales', value: fmt(totalViews), inline: true },
-      { name: '❤️ Likes totaux', value: fmt(totalLikes), inline: true },
-      { name: '💬 Commentaires', value: fmt(totalComments), inline: true },
-      { name: '🔄 Republications', value: fmt(summary.total_shares), inline: true },
-      { name: '🏆 Score moyen', value: '' + fmt(avgScore), inline: true },
-      { name: '📊 Engagement', value: engRate + '%', inline: true },
-    )
-    .setTimestamp();
-}
-
-function vaStatsEmbed(vaName, stats, posts) {
-  return new EmbedBuilder()
-    .setColor(COLORS.primary)
-    .setTitle('Stats du jour - ' + vaName)
-    .addFields(
-      { name: 'Posts', value: '' + posts.length + '/6', inline: true },
-      { name: '👁️ Vues', value: fmt(stats.total_views), inline: true },
-      { name: '❤️ Likes', value: fmt(stats.total_likes), inline: true },
-      { name: '💬 Commentaires', value: fmt(stats.total_comments), inline: true },
-      { name: '🔄 Republications', value: fmt(stats.total_shares), inline: true }
-    )
-    .setTimestamp();
-}
-
-function leaderboardEmbed(rankings, date) {
-  var medals = { 0: '🥇', 1: '🥈', 2: '🥉' };
-  var lines = rankings.map(function(r, i) {
-    var medal = medals[i] || '  ' + (i + 1) + '.';
-    var postStatus = Number(r.post_count) >= 6 ? '✅' : '⚠️ (' + r.post_count + '/6)';
-    var badge = getVaBadge(Number(r.total_views), Number(r.post_count));
-    var engRate = Number(r.total_views) > 0 ? ((Number(r.total_likes) + Number(r.total_comments)) / Number(r.total_views) * 100).toFixed(1) : '0';
-    return medal + ' **' + r.va_name + '** [' + badge + '] → 👁️ ' + fmt(r.total_views) + ' | ❤️ ' + fmt(r.total_likes) + ' | 📊 ' + engRate + '% | ' + postStatus;
-  });
-  return new EmbedBuilder()
-    .setColor(COLORS.gold)
-    .setTitle('🏆 Classement du ' + date)
-    .setDescription(lines.join('\n') || 'Aucune donnee')
-    .setFooter({ text: 'Score = likes + comments×3 + shares×5 | ⭐Top ≥2000 moy | 👍Bon ≥500 moy | 📉Faible <500 moy' })
-    .setTimestamp();
-}
-
-function missingPostsEmbed(lateVAs, date) {
-  var lines = lateVAs.map(function(va) {
-    return '⚠️ **' + va.name + '** → ' + va.postCount + '/6 posts';
-  });
-  return new EmbedBuilder()
-    .setColor(COLORS.error)
-    .setTitle('❌ VA n\'ayant pas atteint 6 posts — ' + date)
-    .setDescription(lines.join('\n') || 'Tout le monde a atteint l\'objectif !')
-    .setTimestamp();
-}
-
-function allPostsMetEmbed(date) {
-  return new EmbedBuilder()
-    .setColor(COLORS.success)
-    .setTitle('🎉 Objectif atteint ! — ' + date)
-    .setDescription('Tous les VA ont poste au moins **6 posts** aujourd\'hui. Bravo a toute l\'equipe !')
-    .setTimestamp();
-}
-
-function formatStats(s) {
+function formatStats(s, platform) {
   if (!s) return 'Donnees indisponibles';
-  return '👁️ Vues: **' + fmt(s.views) + '**\n❤️ Likes: **' + fmt(s.likes) + '**\n💬 Commentaires: **' + fmt(s.comments) + '**\n🔄 Republications: **' + fmt(s.shares) + '**';
+  var lines = '👁️ Vues: **' + fmt(s.views) + '**\n❤️ Likes: **' + fmt(s.likes) + '**\n💬 ' + (platform === 'twitter' ? 'Replies' : 'Commentaires') + ': **' + fmt(s.comments) + '**';
+  if (platform === 'twitter') {
+    lines += '\n🔁 Retweets: **' + fmt(s.retweets || 0) + '**';
+    lines += '\n💬 Quotes: **' + fmt(s.quote_tweets || 0) + '**';
+    lines += '\n🔖 Bookmarks: **' + fmt(s.bookmarks || 0) + '**';
+  } else {
+    lines += '\n🔄 Republications: **' + fmt(s.shares) + '**';
+  }
+  return lines;
 }
 
 function computeDiff(current, previous) {
@@ -201,14 +80,134 @@ function formatDiff(d) {
   return '👁️ ' + sign(d.views) + '\n❤️ ' + sign(d.likes) + '\n💬 ' + sign(d.comments) + '\n🔄 ' + sign(d.shares);
 }
 
+function newPostEmbed(post, stats, platform) {
+  platform = platform || post.platform || 'instagram';
+  var score = calcScore(stats);
+  var engagement = calcEngagement(stats);
+  var perf = getPerformanceLabel(stats.views || 0);
+
+  return new EmbedBuilder()
+    .setColor(perf.color)
+    .setTitle(getPlatformEmoji(platform) + ' New post detected')
+    .addFields(
+      { name: 'VA', value: post.va_name, inline: true },
+      { name: 'Post ID', value: post.ig_post_id || 'N/A', inline: true },
+      { name: 'Heure', value: '<t:' + Math.floor(new Date(post.created_at).getTime() / 1000) + ':R>', inline: true },
+      { name: 'Lien', value: post.url },
+      { name: 'Stats initiales', value: formatStats(stats, platform) },
+      { name: 'Score', value: '🏆 ' + fmt(score), inline: true },
+      { name: 'Engagement', value: '📊 ' + (engagement * 100).toFixed(1) + '%', inline: true },
+    )
+    .setTimestamp();
+}
+
+function hourlyUpdateEmbed(post, currentStats, previousStats, platform) {
+  platform = platform || post.platform || 'instagram';
+  var diff = computeDiff(currentStats, previousStats);
+  var score = calcScore(currentStats);
+  var engagement = calcEngagement(currentStats);
+  var perf = getPerformanceLabel(currentStats.views || 0);
+
+  return new EmbedBuilder()
+    .setColor(perf.color)
+    .setTitle(perf.emoji + ' ' + getPlatformEmoji(platform) + ' Mise a jour horaire - ' + perf.label)
+    .addFields(
+      { name: 'VA', value: post.va_name, inline: true },
+      { name: 'Post ID', value: post.ig_post_id || 'N/A', inline: true },
+      { name: 'Lien', value: post.url },
+      { name: 'Stats actuelles', value: formatStats(currentStats, platform), inline: true },
+      { name: 'Evolution (+/-)', value: formatDiff(diff), inline: true },
+      { name: 'Performance', value: perf.emoji + ' ' + perf.label + ' | 🏆 Score: ' + fmt(score) + ' | 📊 Engagement: ' + (engagement * 100).toFixed(1) + '%' },
+    )
+    .setTimestamp();
+}
+
+function viralAlertEmbed(post, stats, platform) {
+  platform = platform || post.platform || 'instagram';
+  var score = calcScore(stats);
+  var typeLabel = platform === 'twitter' ? 'TWEET' : 'POST';
+  return new EmbedBuilder()
+    .setColor(COLORS.viral)
+    .setTitle('🔥🔥🔥 ' + typeLabel + ' VIRAL DETECTE ! 🔥🔥🔥')
+    .setDescription('Le ' + typeLabel.toLowerCase() + ' de **' + post.va_name + '** vient de passer le seuil viral !')
+    .addFields(
+      { name: 'VA', value: post.va_name, inline: true },
+      { name: 'Post ID', value: post.ig_post_id || 'N/A', inline: true },
+      { name: 'Lien', value: post.url },
+      { name: 'Stats', value: formatStats(stats, platform) },
+      { name: 'Score', value: '🏆 ' + fmt(score), inline: true },
+      { name: 'Engagement', value: '📊 ' + (calcEngagement(stats) * 100).toFixed(1) + '%', inline: true },
+    )
+    .setTimestamp();
+}
+
+function vaStatsEmbed(vaName, stats, posts, platform) {
+  platform = platform || 'instagram';
+  return new EmbedBuilder()
+    .setColor(getPlatformColor(platform))
+    .setTitle(getPlatformEmoji(platform) + ' Stats du jour - ' + vaName)
+    .addFields(
+      { name: 'Posts', value: '' + posts.length + '/6', inline: true },
+      { name: '👁️ Vues', value: fmt(stats.total_views), inline: true },
+      { name: '❤️ Likes', value: fmt(stats.total_likes), inline: true },
+      { name: '💬 ' + (platform === 'twitter' ? 'Replies' : 'Commentaires'), value: fmt(stats.total_comments), inline: true },
+      { name: '🔄 ' + (platform === 'twitter' ? 'Retweets+Quotes' : 'Republications'), value: fmt(stats.total_shares), inline: true }
+    )
+    .setFooter({ text: getPlatformLabel(platform) })
+    .setTimestamp();
+}
+
+function leaderboardEmbed(rankings, date, platform) {
+  platform = platform || 'instagram';
+  var medals = { 0: '🥇', 1: '🥈', 2: '🥉' };
+  var lines = rankings.map(function(r, i) {
+    var medal = medals[i] || '  ' + (i + 1) + '.';
+    var postStatus = Number(r.post_count) >= 6 ? '✅' : '⚠️ (' + r.post_count + '/6)';
+    var badge = getVaBadge(Number(r.total_views), Number(r.post_count));
+    var engRate = Number(r.total_views) > 0 ? ((Number(r.total_likes) + Number(r.total_comments)) / Number(r.total_views) * 100).toFixed(1) : '0';
+    return medal + ' **' + r.va_name + '** [' + badge + '] → 👁️ ' + fmt(r.total_views) + ' | ❤️ ' + fmt(r.total_likes) + ' | 📊 ' + engRate + '% | ' + postStatus;
+  });
+  return new EmbedBuilder()
+    .setColor(COLORS.gold)
+    .setTitle(getPlatformEmoji(platform) + ' 🏆 Classement du ' + date)
+    .setDescription(lines.join('\n') || 'Aucune donnee')
+    .setFooter({ text: getPlatformLabel(platform) + ' | Score = likes + comments×3 + shares×5' })
+    .setTimestamp();
+}
+
+function missingPostsEmbed(lateVAs, date, platform) {
+  platform = platform || 'instagram';
+  var lines = lateVAs.map(function(va) {
+    return '⚠️ **' + va.name + '** → ' + va.postCount + '/6 posts';
+  });
+  return new EmbedBuilder()
+    .setColor(COLORS.error)
+    .setTitle('❌ VA n\'ayant pas atteint 6 posts — ' + date)
+    .setDescription(lines.join('\n') || 'Tout le monde a atteint l\'objectif !')
+    .setFooter({ text: getPlatformLabel(platform) })
+    .setTimestamp();
+}
+
+function allPostsMetEmbed(date, platform) {
+  platform = platform || 'instagram';
+  return new EmbedBuilder()
+    .setColor(COLORS.success)
+    .setTitle('🎉 Objectif atteint ! — ' + date)
+    .setDescription('Tous les VA ont poste au moins **6 posts** aujourd\'hui. Bravo a toute l\'equipe !')
+    .setFooter({ text: getPlatformLabel(platform) })
+    .setTimestamp();
+}
+
 function fmt(n) {
   if (n == null) return '-';
   return Number(n).toLocaleString('fr-FR');
 }
 
 module.exports = {
-  COLORS, calcScore, calcEngagement, getPerformanceLabel, getVaBadge,
+  COLORS, getPlatformColor, getPlatformEmoji, getPlatformLabel,
+  calcScore, calcEngagement, getPerformanceLabel, getVaBadge,
   newPostEmbed, hourlyUpdateEmbed, viralAlertEmbed,
-  dailySummaryEmbed, vaStatsEmbed, leaderboardEmbed,
+  vaStatsEmbed, leaderboardEmbed,
   missingPostsEmbed, allPostsMetEmbed,
+  formatStats, fmt,
 };
