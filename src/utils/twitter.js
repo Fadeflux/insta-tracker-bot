@@ -31,4 +31,13 @@ function normalizeTwitterUrl(url) {
   return 'https://x.com/' + username + '/status/' + id;
 }
 
-module.exports = { extractTweetId: extractTweetId, isTwitterUrl: isTwitterUrl, extractTwitterUrls: extractTwitterUrls, normalizeTwitterUrl: normalizeTwitterUrl };
+function extractTwitterUsername(url) {
+  if (!url) return null;
+  var m = url.match(/(?:twitter\.com|x\.com|mobile\.twitter\.com|mobile\.x\.com)\/(\w+)\/status\//i);
+  if (!m) return null;
+  var u = m[1].toLowerCase();
+  if (u === 'i' || u === 'web' || u.length < 2) return null;
+  return u;
+}
+
+module.exports = { extractTweetId: extractTweetId, isTwitterUrl: isTwitterUrl, extractTwitterUrls: extractTwitterUrls, normalizeTwitterUrl: normalizeTwitterUrl, extractTwitterUsername: extractTwitterUsername };
