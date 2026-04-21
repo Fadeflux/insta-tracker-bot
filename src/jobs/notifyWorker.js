@@ -20,27 +20,31 @@ function createNotifyWorker() {
       var postId = job.data.postId;
       var currentStats = job.data.currentStats;
       var previousStats = job.data.previousStats;
+      var platform = job.data.platform || 'instagram';
       var post = await db.getPost(postId);
       if (!post) return;
 
       try {
-        // Only send viral alerts - no more hourly/new post notifications
         if (job.name === 'hourly-update') {
           var VIRAL = parseInt(process.env.VIRAL_VIEWS || '5000');
           var prevViews = previousStats ? previousStats.views : 0;
           if (currentStats.views >= VIRAL && prevViews < VIRAL) {
-            var viralEmbed = embeds.viralAlertEmbed(post, currentStats);
+            var viralEmbed = embeds.viralAlertEmbed(post, currentStats, platform);
 
-            try {
-              var alertsChannel = await discordClient.channels.fetch(config.discord.channels.alerts);
-              if (alertsChannel) {
-                await alertsChannel.send({ embeds: [viralEmbed] });
+            // Send to the correct platform's alerts channel
+            var platConfig = config.platforms[platform];
+            if (platConfig && platConfig.channels.alerts) {
+              try {
+                var alertsChannel = await discordClient.channels.fetch(platConfig.channels.alerts);
+                if (alertsChannel) {
+                  await alertsChannel.send({ embeds: [viralEmbed] });
+                }
+              } catch(e) {
+                logger.warn('Could not send viral alert to ' + platform + ': ' + e.message);
               }
-            } catch(e) {
-              logger.warn('Could not send viral alert: ' + e.message);
             }
 
-            logger.info('VIRAL ALERT sent for post ' + postId + ' (' + currentStats.views + ' views)');
+            logger.info('[' + platform.toUpperCase() + '] VIRAL ALERT sent for post ' + postId + ' (' + currentStats.views + ' views)');
           }
         }
       } catch (err) {
