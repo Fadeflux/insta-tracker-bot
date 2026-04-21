@@ -28,12 +28,26 @@ var platforms = {
     managerRoleId: process.env.MANAGER_ROLE_ID_TWITTER,
     vaRoleId: process.env.VA_ROLE_ID_TWITTER,
   },
+  geelark: {
+    guildId: process.env.GUILD_ID_GEELARK,
+    channels: {
+      links: process.env.CHANNEL_LINKS_GEELARK,
+      managers: process.env.CHANNEL_MANAGERS_GEELARK,
+      results: process.env.CHANNEL_RESULTS_GEELARK,
+      alerts: process.env.CHANNEL_ALERTS_GEELARK,
+      coaching: process.env.CHANNEL_COACHING_GEELARK,
+      results6h: process.env.CHANNEL_RESULTS_6H_GEELARK,
+    },
+    managerRoleId: process.env.MANAGER_ROLE_ID_GEELARK,
+    vaRoleId: process.env.VA_ROLE_ID_GEELARK,
+  },
 };
 
 // Build guild-to-platform lookup map
 var guildToPlatform = {};
 if (platforms.instagram.guildId) guildToPlatform[platforms.instagram.guildId] = 'instagram';
 if (platforms.twitter.guildId) guildToPlatform[platforms.twitter.guildId] = 'twitter';
+if (platforms.geelark.guildId) guildToPlatform[platforms.geelark.guildId] = 'geelark';
 
 // Build channel-to-platform lookup map (for message routing)
 var channelToPlatform = {};
