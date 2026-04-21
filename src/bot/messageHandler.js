@@ -22,13 +22,16 @@ async function handleMessage(message) {
 
   // Route to the right handler
   if (platform === 'instagram') {
-    await handleInstagramMessage(message, platConfig);
+    await handleInstagramMessage(message, platConfig, 'instagram');
   } else if (platform === 'twitter') {
     await handleTwitterMessage(message, platConfig);
+  } else if (platform === 'geelark') {
+    await handleInstagramMessage(message, platConfig, 'geelark');
   }
 }
 
-async function handleInstagramMessage(message, platConfig) {
+async function handleInstagramMessage(message, platConfig, platform) {
+  platform = platform || 'instagram';
   var urls = extractInstagramUrls(message.content);
 
   if (urls.length === 0) {
@@ -64,12 +67,12 @@ async function handleInstagramMessage(message, platConfig) {
       vaDiscordId: message.author.id,
       vaName: (message.member && message.member.displayName) || message.author.username,
       caption: caption,
-      platform: 'instagram',
+      platform: platform,
       guildId: message.guild.id,
     });
 
     if (!post) { logger.warn('Post insert returned null: ' + igPostId); continue; }
-    logger.info('[IG] New post registered: ' + igPostId + ' by ' + post.va_name);
+    logger.info('[' + platform.toUpperCase() + '] New post registered: ' + igPostId + ' by ' + post.va_name);
 
     try {
       var reply3 = await message.channel.send({ content: 'Post de <@' + message.author.id + '> enregistre ! Tracking actif jusqu a 23h59.' });
@@ -79,14 +82,14 @@ async function handleInstagramMessage(message, platConfig) {
     // Scrape in background
     scrapePost(url).then(function(stats) {
       return db.insertSnapshot(post.id, stats).then(function() {
-        return notifyQueue.add('new-post', { postId: post.id, currentStats: stats, previousStats: null, platform: 'instagram' });
+        return notifyQueue.add('new-post', { postId: post.id, currentStats: stats, previousStats: null, platform: platform });
       });
     }).catch(function(err) {
-      logger.error('[IG] Initial scrape failed for ' + igPostId, { error: err.message });
+      logger.error('[' + platform.toUpperCase() + '] Initial scrape failed for ' + igPostId, { error: err.message });
       db.insertSnapshot(post.id, { views: 0, likes: 0, comments: 0, shares: 0, error: err.message }).catch(function() {});
     });
 
-    await scheduleInitialScrape(post.id, url, 'instagram');
+    await scheduleInitialScrape(post.id, url, platform);
   }
 
   try { await message.delete(); } catch (err) { logger.warn('Could not delete message: ' + err.message); }
