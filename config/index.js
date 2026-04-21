@@ -1,130 +1,68 @@
-require('dotenv').config();
+var config = require('../config');
+console.log('Config loaded OK');
+console.log('Token exists:', !!config.discord.token);
+console.log('DB URL exists:', !!config.db.url);
+console.log('Redis URL exists:', !!config.redis.url);
+console.log('Active platforms:', config.getActivePlatforms().join(', '));
 
-// Per-platform guild configuration
-var platforms = {
-  instagram: {
-    guildId: process.env.GUILD_ID_INSTAGRAM || process.env.GUILD_ID,
-    channels: {
-      links: process.env.CHANNEL_LINKS_INSTAGRAM || process.env.CHANNEL_LINKS,
-      managers: process.env.CHANNEL_MANAGERS_INSTAGRAM || process.env.CHANNEL_MANAGERS,
-      results: process.env.CHANNEL_RESULTS_INSTAGRAM || process.env.CHANNEL_RESULTS,
-      alerts: process.env.CHANNEL_ALERTS_INSTAGRAM || process.env.CHANNEL_ALERTS,
-      coaching: process.env.CHANNEL_COACHING_INSTAGRAM || process.env.CHANNEL_COACHING,
-      results6h: process.env.CHANNEL_RESULTS_6H_INSTAGRAM || process.env.CHANNEL_RESULTS_6H,
-    },
-    managerRoleId: process.env.MANAGER_ROLE_ID_INSTAGRAM || process.env.MANAGER_ROLE_ID,
-    vaRoleId: process.env.VA_ROLE_ID_INSTAGRAM || process.env.VA_ROLE_ID,
-  },
-  twitter: {
-    guildId: process.env.GUILD_ID_TWITTER,
-    channels: {
-      links: process.env.CHANNEL_LINKS_TWITTER,
-      managers: process.env.CHANNEL_MANAGERS_TWITTER,
-      results: process.env.CHANNEL_RESULTS_TWITTER,
-      alerts: process.env.CHANNEL_ALERTS_TWITTER,
-      coaching: process.env.CHANNEL_COACHING_TWITTER,
-      results6h: process.env.CHANNEL_RESULTS_6H_TWITTER,
-    },
-    managerRoleId: process.env.MANAGER_ROLE_ID_TWITTER,
-    vaRoleId: process.env.VA_ROLE_ID_TWITTER,
-  },
-  geelark: {
-    guildId: process.env.GUILD_ID_GEELARK,
-    channels: {
-      links: process.env.CHANNEL_LINKS_GEELARK,
-      managers: process.env.CHANNEL_MANAGERS_GEELARK,
-      results: process.env.CHANNEL_RESULTS_GEELARK,
-      alerts: process.env.CHANNEL_ALERTS_GEELARK,
-      coaching: process.env.CHANNEL_COACHING_GEELARK,
-      results6h: process.env.CHANNEL_RESULTS_6H_GEELARK,
-    },
-    managerRoleId: process.env.MANAGER_ROLE_ID_GEELARK,
-    vaRoleId: process.env.VA_ROLE_ID_GEELARK,
-  },
-};
+var { Client, GatewayIntentBits, Partials } = require('discord.js');
+console.log('Discord.js loaded OK');
 
-// Build guild-to-platform lookup map
-var guildToPlatform = {};
-if (platforms.instagram.guildId) guildToPlatform[platforms.instagram.guildId] = 'instagram';
-if (platforms.twitter.guildId) guildToPlatform[platforms.twitter.guildId] = 'twitter';
-if (platforms.geelark.guildId) guildToPlatform[platforms.geelark.guildId] = 'geelark';
+var { initDb } = require('./db/init');
+var { handleMessage } = require('./bot/messageHandler');
+var { handleCommand } = require('./bot/commands');
+var { initCronJobs } = require('./jobs/cron');
+var { setDiscordClient, createNotifyWorker } = require('./jobs/notifyWorker');
+var { createWebServer } = require('./web/server');
+console.log('All modules loaded OK');
 
-// Build channel-to-platform lookup map (for message routing)
-var channelToPlatform = {};
-Object.keys(platforms).forEach(function(p) {
-  var plat = platforms[p];
-  Object.keys(plat.channels).forEach(function(ch) {
-    if (plat.channels[ch]) channelToPlatform[plat.channels[ch]] = p;
-  });
+var client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildMembers,
+  ],
+  partials: [Partials.Message, Partials.Channel],
 });
 
-// Admin Discord IDs (see all platforms)
-var adminDiscordIds = (process.env.ADMIN_DISCORD_IDS || '').split(',').map(function(s) { return s.trim(); }).filter(Boolean);
+client.once('ready', async function() {
+  console.log('Bot connected as ' + client.user.tag);
+  console.log('Guilds: ' + client.guilds.cache.map(function(g) { return g.name + ' (' + g.id + ')'; }).join(', '));
+  setDiscordClient(client);
+  createNotifyWorker();
+  initCronJobs(client);
+  console.log('All systems operational');
+});
 
-// Helper: get platform config from a guild ID
-function getPlatformByGuild(guildId) {
-  var p = guildToPlatform[guildId];
-  if (!p) return null;
-  return { name: p, config: platforms[p] };
+client.on('messageCreate', async function(message) {
+  try { await handleMessage(message); } catch (err) { console.error('Message error', err); }
+});
+
+client.on('interactionCreate', async function(interaction) {
+  if (!interaction.isChatInputCommand()) return;
+  try { await handleCommand(interaction); } catch (err) { console.error('Command error', err); }
+});
+
+client.on('error', function(err) { console.error('Discord error', err); });
+
+async function start() {
+  try {
+    console.log('Initializing database...');
+    await initDb();
+    console.log('Database ready');
+
+    // Start web dashboard
+    createWebServer();
+
+    console.log('Logging in to Discord...');
+    await client.login(config.discord.token);
+  } catch (err) {
+    console.error('Startup failed:', err);
+    process.exit(1);
+  }
 }
 
-// Helper: get platform config from a channel ID
-function getPlatformByChannel(channelId) {
-  var p = channelToPlatform[channelId];
-  if (!p) return null;
-  return { name: p, config: platforms[p] };
-}
+process.on('unhandledRejection', function(err) { console.error('Unhandled rejection:', err); });
 
-// Helper: get all active platforms (ones with a guildId set)
-function getActivePlatforms() {
-  return Object.keys(platforms).filter(function(p) {
-    return !!platforms[p].guildId;
-  });
-}
-
-// Helper: get all guild IDs for deploy-commands
-function getAllGuildIds() {
-  return Object.keys(platforms).map(function(p) {
-    return platforms[p].guildId;
-  }).filter(Boolean);
-}
-
-// Check if a Discord user ID is admin
-function isAdmin(discordId) {
-  return adminDiscordIds.indexOf(discordId) !== -1;
-}
-
-module.exports = {
-  discord: {
-    token: process.env.DISCORD_TOKEN,
-    clientId: process.env.DISCORD_CLIENT_ID,
-    // Legacy single-guild fields (backward compat — use platforms instead)
-    guildId: process.env.GUILD_ID_INSTAGRAM || process.env.GUILD_ID,
-    channels: platforms.instagram.channels,
-    managerRoleId: platforms.instagram.managerRoleId,
-    vaRoleId: platforms.instagram.vaRoleId,
-  },
-  platforms: platforms,
-  guildToPlatform: guildToPlatform,
-  channelToPlatform: channelToPlatform,
-  adminDiscordIds: adminDiscordIds,
-  getPlatformByGuild: getPlatformByGuild,
-  getPlatformByChannel: getPlatformByChannel,
-  getActivePlatforms: getActivePlatforms,
-  getAllGuildIds: getAllGuildIds,
-  isAdmin: isAdmin,
-  db: {
-    url: process.env.DATABASE_URL,
-  },
-  redis: {
-    url: process.env.REDIS_URL || 'redis://localhost:6379',
-  },
-  scraping: {
-    concurrency: parseInt(process.env.SCRAPE_CONCURRENCY || '3', 10),
-    retryMax: parseInt(process.env.SCRAPE_RETRY_MAX || '3', 10),
-  },
-  twitter: {
-    bearerToken: process.env.TWITTER_BEARER_TOKEN,
-  },
-  timezone: process.env.TZ || 'Europe/Paris',
-};
+start();
