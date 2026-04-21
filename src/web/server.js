@@ -375,6 +375,79 @@ function createWebServer() {
     } catch(err) { res.status(500).json({ error: err.message }); }
   });
 
+  // ==================== ACCOUNTS (per-handle tracking) ====================
+
+  // List accounts with aggregated stats. Filters: platform (via effective),
+  // status=active|inactive|all (default active), vaDiscordId (optional).
+  app.get('/api/accounts', checkAuth, async function(req, res) {
+    try {
+      var platform = getEffectivePlatform(req);
+      var status = req.query.status || 'active';
+      var opts = {};
+      if (platform) opts.platform = platform;
+      if (status && status !== 'all') opts.status = status;
+      if (req.query.va) opts.vaDiscordId = req.query.va;
+      var accounts = await db.listAccountsWithStats(opts);
+      // Enrich with a small derived field: days since last post.
+      var now = Date.now();
+      accounts = accounts.map(function(a) {
+        var ref = a.last_post_at || a.last_seen_at;
+        a.days_since_last_post = ref ? Math.floor((now - new Date(ref).getTime()) / (1000 * 60 * 60 * 24)) : null;
+        return a;
+      });
+      res.json({ platform: platform || 'all', status: status, count: accounts.length, accounts: accounts });
+    } catch(err) { res.status(500).json({ error: err.message }); }
+  });
+
+  // Account detail page: recent posts with latest stats.
+  app.get('/api/accounts/:id', checkAuth, async function(req, res) {
+    try {
+      var days = parseInt(req.query.days) || 30;
+      var details = await db.getAccountDetails(req.params.id, days);
+      if (!details) return res.status(404).json({ error: 'Account not found' });
+      // Respect platform ACL
+      if (req.userPlatform !== 'all') {
+        var userPlats = req.userPlatform.split(',');
+        if (userPlats.indexOf(details.account.platform) === -1) {
+          return res.status(403).json({ error: 'Access denied for this platform' });
+        }
+      }
+      details.posts = details.posts.map(function(p) {
+        p.score = calcScore(p);
+        p.engagement = calcEngagement(p);
+        p.perf = getPerf(Number(p.views) || 0);
+        return p;
+      });
+      res.json(details);
+    } catch(err) { res.status(500).json({ error: err.message }); }
+  });
+
+  // Manually flip an account's status (manager+ only).
+  app.post('/api/accounts/:id/status', checkAuth, async function(req, res) {
+    if (req.userRole !== 'admin' && req.userRole !== 'manager') {
+      return res.status(403).json({ error: 'Manager or admin only' });
+    }
+    try {
+      var status = req.body.status;
+      if (status !== 'active' && status !== 'inactive') {
+        return res.status(400).json({ error: 'status must be active or inactive' });
+      }
+      var updated = await db.setAccountStatus(req.params.id, status);
+      if (!updated) return res.status(404).json({ error: 'Account not found' });
+      res.json({ success: true, account: updated });
+    } catch(err) { res.status(500).json({ error: err.message }); }
+  });
+
+  // Trigger an on-demand inactivity sweep (admin only).
+  app.post('/api/accounts/sweep-inactive', checkAuth, async function(req, res) {
+    if (req.userRole !== 'admin') return res.status(403).json({ error: 'Admin only' });
+    try {
+      var days = parseInt(req.body.days) || undefined;
+      var flipped = await db.markInactiveAccounts(days);
+      res.json({ success: true, flipped: flipped.length, accounts: flipped });
+    } catch(err) { res.status(500).json({ error: err.message }); }
+  });
+
   // ==================== ADMIN: USER MANAGEMENT ====================
 
   function checkAdmin(req, res, next) {
