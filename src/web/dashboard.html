@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tracker Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#0a0a0f;--bg2:#12121a;--bg3:#1a1a28;--bg4:#222235;--pink:#e1306c;--pink2:#ff4081;--purple:#7c3aed;--blue:#3b82f6;--twitter:#1da1f2;--green:#10b981;--orange:#f59e0b;--red:#ef4444;--viral:#ff00ff;--text:#e2e8f0;--text2:#94a3b8;--text3:#64748b;--glass:rgba(255,255,255,0.03);--glass2:rgba(255,255,255,0.06);--border:rgba(255,255,255,0.06);--shadow:0 8px 32px rgba(0,0,0,0.4);--accent:var(--pink)}
+body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+.login-wrap{display:flex;justify-content:center;align-items:center;min-height:100vh;background:radial-gradient(ellipse at top,#1a1030,var(--bg))}
+.login-card{background:var(--bg2);border:1px solid var(--border);border-radius:24px;padding:48px 40px;width:380px;box-shadow:var(--shadow)}
+.login-card .logo{text-align:center;margin-bottom:32px}
+.login-card .logo h1{font-size:28px;font-weight:800;background:linear-gradient(135deg,var(--pink),var(--purple));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.login-card .logo p{color:var(--text3);font-size:13px;margin-top:4px}
+.login-card input{width:100%;padding:14px 16px;margin-bottom:14px;border:1px solid var(--border);border-radius:12px;background:var(--bg3);color:var(--text);font-size:14px;outline:none}
+.login-card input:focus{border-color:var(--pink)}
+.login-card .btn{width:100%;padding:14px;background:linear-gradient(135deg,var(--pink),var(--purple));color:#fff;border:none;border-radius:12px;font-size:15px;font-weight:600;cursor:pointer}
+.login-card .btn:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(225,48,108,0.3)}
+.login-err{color:var(--red);text-align:center;margin-top:12px;font-size:13px;display:none}
+.app{display:none}
+.topbar{background:var(--bg2);border-bottom:1px solid var(--border);padding:12px 32px;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;z-index:100}
+.topbar .brand{font-size:18px;font-weight:800;background:linear-gradient(135deg,var(--pink),var(--purple));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.topbar .right{display:flex;align-items:center;gap:12px}
+.topbar .user{color:var(--text2);font-size:13px;padding:6px 14px;background:var(--bg3);border-radius:20px}
+.topbar .logout{padding:6px 14px;background:var(--bg4);color:var(--text2);border:1px solid var(--border);border-radius:20px;cursor:pointer;font-size:13px}
+.topbar .logout:hover{border-color:var(--pink);color:var(--pink)}
+.plat-switch{display:flex;gap:0;border:1px solid var(--border);border-radius:10px;overflow:hidden}
+.plat-btn{padding:7px 16px;font-size:12px;font-weight:700;cursor:pointer;border:none;background:var(--bg3);color:var(--text3);transition:all 0.2s}
+.plat-btn.active-ig{background:var(--pink);color:#fff}
+.plat-btn.active-tw{background:var(--twitter);color:#fff}
+.plat-btn:hover:not(.active-ig):not(.active-tw){color:var(--text)}
+.nav{display:flex;gap:0;background:var(--bg2);padding:0 32px;border-bottom:1px solid var(--border);overflow-x:auto}
+.nav-item{padding:14px 24px;cursor:pointer;font-size:13px;font-weight:600;color:var(--text3);border-bottom:2px solid transparent;white-space:nowrap}
+.nav-item.on{color:var(--accent);border-bottom-color:var(--accent)}
+.nav-item:hover{color:var(--text)}
+.main{padding:24px 32px;max-width:1400px;margin:0 auto}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-bottom:28px}
+.kpi{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:18px;position:relative;overflow:hidden;transition:transform 0.2s}
+.kpi:hover{transform:translateY(-4px);box-shadow:var(--shadow)}
+.kpi .glow{position:absolute;top:-20px;right:-20px;width:80px;height:80px;border-radius:50%;opacity:0.08}
+.kpi .icon{font-size:18px;margin-bottom:6px}
+.kpi .val{font-size:24px;font-weight:800;line-height:1}
+.kpi .lbl{font-size:11px;color:var(--text3);margin-top:5px;font-weight:500}
+.kpi .trend{font-size:10px;margin-top:5px;font-weight:600}
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:24px;margin-bottom:20px}
+.card h3{font-size:15px;font-weight:700;margin-bottom:16px;display:flex;align-items:center;gap:8px}
+.card h3 .dot{width:8px;height:8px;border-radius:50%;background:var(--accent)}
+.tbl{width:100%;border-collapse:separate;border-spacing:0}
+.tbl th{padding:10px 14px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:var(--text3);background:var(--bg3)}
+.tbl th:first-child{border-radius:8px 0 0 8px}.tbl th:last-child{border-radius:0 8px 8px 0}
+.tbl td{padding:11px 14px;font-size:12px;border-bottom:1px solid var(--border)}
+.tbl tr{transition:background 0.15s;cursor:pointer}.tbl tr:hover{background:var(--glass2)}
+.ok{color:var(--green);font-weight:600}.warn{color:var(--orange);font-weight:600}.bad{color:var(--red);font-weight:600}
+.bars{display:flex;align-items:flex-end;gap:6px;height:200px;padding:8px 0}
+.bar-w{display:flex;flex-direction:column;align-items:center;flex:1;min-width:0}
+.bar-v{font-size:10px;color:var(--text2);margin-bottom:4px;font-weight:600}
+.bar{width:100%;border-radius:6px 6px 2px 2px;min-height:4px;transition:height 0.5s ease}
+.bar-l{font-size:9px;color:var(--text3);margin-top:6px;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
+.gauge-wrap{display:flex;justify-content:center;padding:16px}
+.gauge{position:relative;width:120px;height:120px}
+.gauge svg{transform:rotate(-90deg)}
+.gauge-text{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center}
+.gauge-text .pct{font-size:24px;font-weight:800}
+.gauge-text .sub{font-size:10px;color:var(--text3)}
+.modal-bg{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:200;justify-content:center;align-items:center;backdrop-filter:blur(4px)}
+.modal-bg.show{display:flex}
+.modal{background:var(--bg2);border:1px solid var(--border);border-radius:20px;padding:32px;width:90%;max-width:900px;max-height:85vh;overflow-y:auto;box-shadow:var(--shadow)}
+.modal h2{font-size:18px;font-weight:700;margin-bottom:20px;display:flex;justify-content:space-between;align-items:center}
+.modal .close{cursor:pointer;font-size:20px;color:var(--text3);background:var(--bg3);border:none;width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center}
+.modal .close:hover{color:var(--accent)}
+.picker{display:flex;gap:12px;align-items:center;margin-bottom:20px;flex-wrap:wrap}
+.picker input,.picker select{padding:10px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:13px}
+.btn-sm{padding:10px 20px;background:linear-gradient(135deg,var(--accent),var(--purple));color:#fff;border:none;border-radius:10px;font-size:13px;font-weight:600;cursor:pointer}
+.btn-sm.btn-off{background:var(--bg3);color:var(--text2);border:1px solid var(--border)}
+.btn-sm.btn-off:hover{border-color:var(--accent);color:var(--text)}
+.post-card{background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:12px}
+.post-card .post-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px}
+.post-card .post-link{color:var(--accent);text-decoration:none;font-size:12px;font-weight:600;padding:4px 12px;border-radius:6px;border:1px solid}
+.post-card .post-link:hover{opacity:0.8}
+.post-card .post-stats{display:flex;gap:14px;font-size:12px;flex-wrap:wrap}
+.post-card .post-stats span{display:flex;align-items:center;gap:4px}
+.perf-badge{display:inline-block;padding:3px 10px;border-radius:6px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px}
+.perf-viral{background:rgba(255,0,255,0.15);color:#ff00ff;border:1px solid rgba(255,0,255,0.3)}
+.perf-bon{background:rgba(16,185,129,0.15);color:#10b981;border:1px solid rgba(16,185,129,0.3)}
+.perf-moyen{background:rgba(245,158,11,0.15);color:#f59e0b;border:1px solid rgba(245,158,11,0.3)}
+.perf-flop{background:rgba(239,68,68,0.15);color:#ef4444;border:1px solid rgba(239,68,68,0.3)}
+.badge-top{background:rgba(255,215,0,0.12);color:#ffd700;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700}
+.badge-bon{background:rgba(16,185,129,0.12);color:#10b981;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700}
+.badge-faible{background:rgba(239,68,68,0.12);color:#ef4444;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700}
+.milestone{display:inline-flex;flex-direction:column;align-items:center;padding:8px 14px;background:var(--bg);border-radius:8px;border:1px solid var(--border);min-width:70px}
+.milestone .ms-val{font-size:16px;font-weight:700;color:var(--purple)}
+.milestone .ms-lbl{font-size:9px;color:var(--text3);margin-top:2px}
+.compare-sel{display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap}
+.compare-sel select{padding:10px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:13px}
+.compare-sel button{padding:10px 20px;background:linear-gradient(135deg,var(--accent),var(--purple));color:#fff;border:none;border-radius:10px;font-size:13px;font-weight:600;cursor:pointer}
+@media(max-width:768px){.main{padding:16px}.topbar{padding:12px 16px}.nav{padding:0 16px}.kpis{grid-template-columns:repeat(2,1fr)}}
+::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:var(--bg)}::-webkit-scrollbar-thumb{background:var(--bg4);border-radius:3px}
+</style>
+</head>
+<body>
+<div class="login-wrap" id="loginPage">
+<div class="login-card">
+<div class="logo"><h1>Shinra Tracker</h1><p>Dashboard multi-plateforme</p></div>
+<input type="text" id="username" placeholder="Nom d'utilisateur">
+<input type="password" id="password" placeholder="Mot de passe" onkeypress="if(event.key==='Enter')doLogin()">
+<button class="btn" onclick="doLogin()">Se connecter</button>
+<p class="login-err" id="loginErr">Identifiants incorrects</p>
+</div>
+</div>
+<div class="app" id="app">
+<div class="topbar">
+<div class="brand" id="brandTitle">Shinra Tracker</div>
+<div class="right">
+<div class="plat-switch" id="platSwitch"></div>
+<span class="user" id="curUser"></span>
+<button class="logout" onclick="doLogout()">Deconnexion</button>
+</div>
+</div>
+<div class="nav">
+<div class="nav-item on" onclick="go('dash',this)">Dashboard</div>
+<div class="nav-item" onclick="go('lb',this)">Classement</div>
+<div class="nav-item" onclick="go('top',this)">Top Posts</div>
+<div class="nav-item" onclick="go('reco',this)">Recommandations</div>
+<div class="nav-item" onclick="go('saved',this)">Posts sauvegardes</div>
+<div class="nav-item" onclick="go('heat',this)">Meilleures heures</div>
+</div>
+<div class="main" id="content"></div>
+</div>
+<div class="modal-bg" id="modalBg" onclick="if(event.target===this)closeModal()">
+<div class="modal" id="modalContent"></div>
+</div>
+<script>
+var T=localStorage.getItem('dt'),A='',VAS=[];
+var PLAT=localStorage.getItem('dp')||'instagram';
+var ALLOWED_PLATS=JSON.parse(localStorage.getItem('dap')||'["instagram"]');
+var USER_ROLE=localStorage.getItem('dr')||'va';
+if(T)showApp();
+
+function doLogin(){var u=document.getElementById('username').value,p=document.getElementById('password').value;fetch(A+'/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})}).then(function(r){return r.json()}).then(function(d){if(d.token){T=d.token;localStorage.setItem('dt',T);localStorage.setItem('du',d.username);localStorage.setItem('dr',d.role||'va');localStorage.setItem('dap',JSON.stringify(d.allowedPlatforms||['instagram']));ALLOWED_PLATS=d.allowedPlatforms||['instagram'];USER_ROLE=d.role||'va';PLAT=ALLOWED_PLATS[0]||'instagram';localStorage.setItem('dp',PLAT);showApp()}else{document.getElementById('loginErr').style.display='block'}}).catch(function(){document.getElementById('loginErr').style.display='block'})}
+function doLogout(){T=null;localStorage.removeItem('dt');localStorage.removeItem('du');localStorage.removeItem('dp');localStorage.removeItem('dap');localStorage.removeItem('dr');location.reload()}
+
+function switchPlatform(p){PLAT=p;localStorage.setItem('dp',p);updatePlatUI();var cur=document.querySelector('.nav-item.on');if(cur)go(cur.getAttribute('data-tab')||'dash',cur)}
+
+function updatePlatUI(){
+var sw=document.getElementById('platSwitch');sw.innerHTML='';
+if(ALLOWED_PLATS.length>1){
+ALLOWED_PLATS.forEach(function(p){var b=document.createElement('button');b.className='plat-btn'+(PLAT===p?(p==='twitter'?' active-tw':' active-ig'):'');b.textContent=p==='twitter'?'🐦 Twitter':'📸 Instagram';b.onclick=function(){switchPlatform(p)};sw.appendChild(b)})
+}else{
+var b=document.createElement('button');b.className='plat-btn'+(PLAT==='twitter'?' active-tw':' active-ig');b.textContent=PLAT==='twitter'?'🐦 Twitter':'📸 Instagram';b.style.cursor='default';sw.appendChild(b)
+}
+document.documentElement.style.setProperty('--accent',PLAT==='twitter'?'var(--twitter)':'var(--pink)');
+document.getElementById('brandTitle').textContent=PLAT==='twitter'?'Shinra Tracker — Twitter':'Shinra Tracker — Instagram';
+}
+
+function showApp(){document.getElementById('loginPage').style.display='none';document.getElementById('app').style.display='block';document.getElementById('curUser').textContent=localStorage.getItem('du')||'';ALLOWED_PLATS=JSON.parse(localStorage.getItem('dap')||'["instagram"]');USER_ROLE=localStorage.getItem('dr')||'va';if(ALLOWED_PLATS.indexOf(PLAT)===-1)PLAT=ALLOWED_PLATS[0]||'instagram';updatePlatUI();go('dash',document.querySelector('.nav-item'))}
+
+function af(u){var sep=u.indexOf('?')!==-1?'&':'?';var url=A+u+sep+'platform='+PLAT;return fetch(url,{headers:{'X-Auth-Token':T}}).then(function(r){if(r.status===401){doLogout();throw new Error('x')}if(r.status===403){throw new Error('Acces refuse pour cette plateforme')}return r.json()})}
+
+function go(t,el){document.querySelectorAll('.nav-item').forEach(function(n){n.classList.remove('on')});if(el){el.classList.add('on');el.setAttribute('data-tab',t)}if(t==='dash')loadDash();else if(t==='lb')loadLB();else if(t==='top')loadTop();else if(t==='reco')loadReco();else if(t==='saved')loadSaved();else if(t==='heat')loadHeat()}
+
+function fm(n){return n==null?'0':Number(n).toLocaleString('fr-FR')}
+function platEmoji(){return PLAT==='twitter'?'🐦':'📸'}
+function platLabel(){return PLAT==='twitter'?'Twitter/X':'Instagram'}
+function platLinkLabel(){return PLAT==='twitter'?'Twitter ↗':'Instagram ↗'}
+function perfBadge(p){var m={viral:'🔥 VIRAL',bon:'✅ BON',moyen:'➡️ MOYEN',flop:'⬇️ FLOP'};return'<span class="perf-badge perf-'+(p||'flop')+'">'+(m[p]||'⬇️ FLOP')+'</span>'}
+function vaBadge(b){var m={top:'⭐ Top',bon:'👍 Bon',faible:'📉 Faible'};var c={top:'badge-top',bon:'badge-bon',faible:'badge-faible'};return'<span class="'+(c[b]||'badge-faible')+'">'+(m[b]||'📉 Faible')+'</span>'}
+function perfColor(p){return{viral:'var(--viral)',bon:'var(--green)',moyen:'var(--orange)',flop:'var(--red)'}[p]||'var(--red)'}
+function scoreOf(s){return(Number(s.likes)||0)+(Number(s.comments)||0)*3+(Number(s.shares)||0)*5}
+function engOf(s){var v=Number(s.views)||0;if(!v)return 0;return((Number(s.likes)||0)+(Number(s.comments)||0))/v}
+function perfOf(v){if(v>=5000)return'viral';if(v>=1000)return'bon';if(v>=300)return'moyen';return'flop'}
+function advScore(s){var v=Number(s.views)||0;if(v<=1)return 0;var eng=engOf(s);return Math.round((eng*100)*Math.log10(v)*100)/100}
+
+var DASH_MODE='today';
+function dDate(offset){var d=new Date();d.setDate(d.getDate()+offset);return d.toISOString().split('T')[0]}
+
+function loadDash(){
+var today=dDate(0);
+var h='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:20px;align-items:center">';
+h+='<button class="btn-sm '+(DASH_MODE==='today'?'':'btn-off')+'" onclick="DASH_MODE=\'today\';loadDashData()">Aujourd\'hui</button>';
+h+='<button class="btn-sm '+(DASH_MODE==='yesterday'?'':'btn-off')+'" onclick="DASH_MODE=\'yesterday\';loadDashData()">Hier</button>';
+h+='<button class="btn-sm '+(DASH_MODE==='7d'?'':'btn-off')+'" onclick="DASH_MODE=\'7d\';loadDashData()">7 jours</button>';
+h+='<button class="btn-sm '+(DASH_MODE==='30d'?'':'btn-off')+'" onclick="DASH_MODE=\'30d\';loadDashData()">30 jours</button>';
+h+='<span style="color:var(--text3);font-size:12px;margin-left:8px">ou</span>';
+h+='<input type="date" id="dashCustomDate" value="'+today+'" style="padding:8px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:12px">';
+h+='<button class="btn-sm btn-off" onclick="DASH_MODE=\'custom\';loadDashData()">Charger</button>';
+h+='<span style="margin-left:auto"></span>';
+h+='<button class="btn-sm '+(DASH_MODE==='compare'?'':'btn-off')+'" onclick="DASH_MODE=\'compare\';loadDashData()">📊 Comparer</button>';
+h+='</div><div id="dashArea"><p style="color:var(--text3);text-align:center;padding:40px">Chargement...</p></div>';
+document.getElementById('content').innerHTML=h;loadDashData()}
+
+function loadDashData(){
+document.querySelectorAll('#content > div:first-child .btn-sm').forEach(function(b){b.classList.add('btn-off')});
+var btns=document.querySelectorAll('#content > div:first-child .btn-sm');
+var idx={today:0,yesterday:1,'7d':2,'30d':3,compare:btns.length-1};
+if(idx[DASH_MODE]!==undefined&&btns[idx[DASH_MODE]])btns[idx[DASH_MODE]].classList.remove('btn-off');
+if(DASH_MODE==='compare'){loadCompare();return}
+if(DASH_MODE==='7d'||DASH_MODE==='30d'){loadMultiDay(DASH_MODE==='7d'?7:30);return}
+var date=DASH_MODE==='yesterday'?dDate(-1):DASH_MODE==='custom'?(document.getElementById('dashCustomDate')?document.getElementById('dashCustomDate').value:dDate(0)):dDate(0);
+af('/api/stats/'+date).then(function(d){
+var s=d.summaries;
+s=s.map(function(x){var tv=Number(x.total_views),tl=Number(x.total_likes),tc=Number(x.total_comments),ts=Number(x.total_shares||0),pc=Number(x.post_count);x.avg_views=pc>0?Math.round(tv/pc):0;x.total_score=tl+tc*3+ts*5;x.avg_score=pc>0?Math.round(x.total_score/pc):0;x.engagement_rate=tv>0?((tl+tc)/tv*100).toFixed(1):'0.0';x.badge=x.avg_views>=2000?'top':x.avg_views>=500?'bon':'faible';return x});
+s.sort(function(a,b){return Number(b.total_views)-Number(a.total_views)});
+var tv=0,tl=0,tc=0,ts=0,tp=0,totalScore=0;
+s.forEach(function(x){tv+=Number(x.total_views);tl+=Number(x.total_likes);tc+=Number(x.total_comments);ts+=Number(x.total_shares||0);tp+=Number(x.post_count);totalScore+=Number(x.total_score||0)});
+var obj6=s.filter(function(x){return Number(x.post_count)>=6}).length;
+var pct6=s.length?Math.round((obj6/s.length)*100):0;
+var avgEng=tv>0?((tl+tc)/tv*100).toFixed(1):'0.0';
+var h='<h3 style="margin-bottom:16px;color:var(--text2);font-size:13px">'+platEmoji()+' '+platLabel()+' — '+date+'</h3>';
+h+='<div class="kpis">';
+h+=kpi('👥',''+s.length,'VA actifs','','pink');
+h+=kpi('📝',''+tp,'Posts total','Obj: '+s.length*6,'blue');
+h+=kpi('👁️',fm(tv),'Vues totales','','purple');
+h+=kpi('❤️',fm(tl),'Likes totaux','','pink');
+h+=kpi('💬',fm(tc),PLAT==='twitter'?'Replies':'Commentaires','','blue');
+h+=kpi('🏆',fm(totalScore),'Score total','L+C×3+S×5','orange');
+h+=kpi('📊',avgEng+'%','Engagement moy','(L+C)/V','green');
+h+=kpi('🎯',pct6+'%','Objectif 6 posts',obj6+'/'+s.length+' VA','green');
+h+='</div>';
+h+='<div style="display:grid;grid-template-columns:1fr 2fr;gap:20px;margin-bottom:20px">';
+h+='<div class="card"><h3><span class="dot"></span>Completion</h3>'+gauge(pct6)+'<div style="text-align:center;margin-top:8px;font-size:12px;color:var(--text3)">'+obj6+' sur '+s.length+' VA ont 6+ posts</div></div>';
+h+='<div class="card"><h3><span class="dot"></span>Vues par VA</h3><div class="bars">';
+var mx=Math.max.apply(null,s.map(function(x){return Number(x.total_views)}).concat([1]));
+s.forEach(function(x){var ht=Math.max(4,(Number(x.total_views)/mx)*170);var col=x.badge==='top'?'var(--green)':x.badge==='bon'?'var(--blue)':'var(--red)';h+='<div class="bar-w"><div class="bar-v">'+fm(Number(x.total_views))+'</div><div class="bar" style="height:'+ht+'px;background:'+col+'"></div><div class="bar-l">'+x.va_name.split(' ')[0]+'</div></div>'});
+h+='</div></div></div>';
+if(s.length>0){var best=s[0];h+='<div class="card" style="border-left:3px solid var(--green)"><h3>⭐ Meilleur VA</h3><div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:16px"><div><div style="font-size:20px;font-weight:800">'+best.va_name+' '+vaBadge(best.badge)+'</div><div style="color:var(--text3);font-size:13px;margin-top:4px">'+best.post_count+' posts | Score: '+fm(best.total_score)+' | Engagement: '+best.engagement_rate+'%</div></div><div style="display:flex;gap:24px"><div style="text-align:center"><div style="font-size:22px;font-weight:700;color:var(--purple)">'+fm(Number(best.total_views))+'</div><div style="font-size:11px;color:var(--text3)">vues</div></div><div style="text-align:center"><div style="font-size:22px;font-weight:700;color:var(--accent)">'+fm(Number(best.total_likes))+'</div><div style="font-size:11px;color:var(--text3)">likes</div></div></div></div></div>'}
+h+='<div class="card"><h3><span class="dot"></span>Tableau detaille</h3><table class="tbl"><thead><tr><th>#</th><th>VA</th><th>Badge</th><th>Posts</th><th>Vues</th><th>Likes</th><th>'+(PLAT==='twitter'?'Repl.':'Comm.')+'</th><th>Score</th><th>Engage.</th><th>Moy/post</th></tr></thead><tbody>';
+s.forEach(function(x,i){var m=i<3?['🥇','🥈','🥉'][i]:''+(i+1);var pc=Number(x.post_count);var cls=pc>=6?'ok':pc>=3?'warn':'bad';var avg=pc>0?fm(Math.round(Number(x.total_views)/pc)):'0';h+='<tr onclick="openVA(\''+x.va_discord_id+'\',\''+x.va_name+'\')"><td>'+m+'</td><td><b>'+x.va_name+'</b></td><td>'+vaBadge(x.badge)+'</td><td class="'+cls+'">'+pc+'/6</td><td>'+fm(Number(x.total_views))+'</td><td>'+fm(Number(x.total_likes))+'</td><td>'+fm(Number(x.total_comments))+'</td><td style="color:var(--orange);font-weight:600">'+fm(x.total_score)+'</td><td>'+x.engagement_rate+'%</td><td>'+avg+'</td></tr>'});
+h+='</tbody></table></div>';
+af('/api/streaks').then(function(sd){var streaks=sd.streaks.filter(function(s){return s.current_streak>0||s.best_streak>0});if(streaks.length===0)return;var sh='<div class="card"><h3><span class="dot" style="background:var(--orange)"></span>🔥 Streaks '+platLabel()+'</h3><table class="tbl"><thead><tr><th>VA</th><th>Streak actuel</th><th>Meilleur streak</th><th>Badge</th></tr></thead><tbody>';streaks.forEach(function(s){var badge='';if(s.current_streak>=10)badge='🏆 Legendaire';else if(s.current_streak>=5)badge='🔥 En feu';else if(s.current_streak>=3)badge='⚡ Motive';else if(s.current_streak>0)badge='✅ Actif';else badge='💤 Inactif';var col=s.current_streak>=5?'var(--green)':s.current_streak>=3?'var(--orange)':'var(--text2)';sh+='<tr><td><b>'+s.va_name+'</b></td><td style="color:'+col+';font-weight:700">'+s.current_streak+' jours</td><td>'+s.best_streak+' jours</td><td>'+badge+'</td></tr>'});sh+='</tbody></table></div>';document.getElementById('dashArea').innerHTML+=sh}).catch(function(){});
+document.getElementById('dashArea').innerHTML=h})}
+
+function loadMultiDay(days){af('/api/history/'+days).then(function(d){var daily=d.history.map(function(x){var tv=x.summaries.reduce(function(a,b){return a+Number(b.total_views)},0);var tl=x.summaries.reduce(function(a,b){return a+Number(b.total_likes)},0);var tc=x.summaries.reduce(function(a,b){return a+Number(b.total_comments)},0);var tp=x.summaries.reduce(function(a,b){return a+Number(b.post_count)},0);var score=tl+tc*3;return{date:x.date,views:tv,likes:tl,comments:tc,posts:tp,score:score,eng:tv>0?((tl+tc)/tv*100):0,summaries:x.summaries}}).reverse();
+var totV=daily.reduce(function(a,b){return a+b.views},0),totL=daily.reduce(function(a,b){return a+b.likes},0),totC=daily.reduce(function(a,b){return a+b.comments},0),totP=daily.reduce(function(a,b){return a+b.posts},0),totS=totL+totC*3;
+var avgEng=totV>0?((totL+totC)/totV*100).toFixed(1):'0.0';
+var h='<h3 style="margin-bottom:16px;color:var(--text2);font-size:13px">'+platEmoji()+' '+platLabel()+' — Derniers '+days+' jours</h3>';
+h+='<div class="kpis">';h+=kpi('📝',''+totP,'Posts total','','blue');h+=kpi('👁️',fm(totV),'Vues totales','','purple');h+=kpi('❤️',fm(totL),'Likes totaux','','pink');h+=kpi('🏆',fm(totS),'Score total','','orange');h+=kpi('📊',avgEng+'%','Engagement moy','','green');h+=kpi('📆',''+days,'Jours','','blue');h+='</div>';
+h+='<div class="card"><h3><span class="dot"></span>Vues par jour</h3><div class="bars">';var mx=Math.max.apply(null,daily.map(function(x){return x.views}).concat([1]));daily.forEach(function(x){var ht=Math.max(4,(x.views/mx)*170);h+='<div class="bar-w"><div class="bar-v">'+fm(x.views)+'</div><div class="bar" style="height:'+ht+'px;background:linear-gradient(to top,var(--accent),var(--purple))"></div><div class="bar-l">'+x.date.slice(5)+'</div></div>'});h+='</div></div>';
+h+='<div class="card"><h3><span class="dot"></span>Engagement par jour</h3><div class="bars">';var mxe=Math.max.apply(null,daily.map(function(x){return x.eng}).concat([1]));daily.forEach(function(x){var ht=Math.max(4,(x.eng/mxe)*170);var col=x.eng>=5?'var(--green)':x.eng>=2?'var(--orange)':'var(--red)';h+='<div class="bar-w"><div class="bar-v">'+x.eng.toFixed(1)+'%</div><div class="bar" style="height:'+ht+'px;background:'+col+'"></div><div class="bar-l">'+x.date.slice(5)+'</div></div>'});h+='</div></div>';
+document.getElementById('dashArea').innerHTML=h})}
+
+function loadCompare(){var today=dDate(0),yesterday=dDate(-1);Promise.all([af('/api/stats/'+today),af('/api/stats/'+yesterday)]).then(function(res){var st=res[0].summaries,sy=res[1].summaries;function sum(arr,k){return arr.reduce(function(a,b){return a+Number(b[k]||0)},0)}var tvT=sum(st,'total_views'),tlT=sum(st,'total_likes'),tcT=sum(st,'total_comments'),tpT=sum(st,'post_count');var tvY=sum(sy,'total_views'),tlY=sum(sy,'total_likes'),tcY=sum(sy,'total_comments'),tpY=sum(sy,'post_count');var engT=tvT>0?((tlT+tcT)/tvT*100).toFixed(1):'0.0';var engY=tvY>0?((tlY+tcY)/tvY*100).toFixed(1):'0.0';function diff(a,b){if(b===0)return a>0?'+∞':'—';var p=Math.round((a-b)/b*100);return(p>=0?'+':'')+p+'%'}function diffCol(a,b){return a>=b?'var(--green)':'var(--red)'}
+var h='<h3 style="margin-bottom:16px;color:var(--text2);font-size:13px">'+platEmoji()+' '+platLabel()+' — Aujourd\'hui vs Hier</h3>';
+h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">';
+h+='<div class="card" style="border-top:3px solid var(--accent)"><h3>Aujourd\'hui — '+today+'</h3><div style="display:grid;grid-template-columns:1fr 1fr;gap:12px"><div><div style="font-size:11px;color:var(--text3)">Vues</div><div style="font-size:22px;font-weight:800;color:var(--purple)">'+fm(tvT)+'</div></div><div><div style="font-size:11px;color:var(--text3)">Likes</div><div style="font-size:22px;font-weight:800;color:var(--accent)">'+fm(tlT)+'</div></div><div><div style="font-size:11px;color:var(--text3)">Posts</div><div style="font-size:22px;font-weight:800">'+tpT+'</div></div><div><div style="font-size:11px;color:var(--text3)">Engagement</div><div style="font-size:22px;font-weight:800;color:var(--green)">'+engT+'%</div></div></div></div>';
+h+='<div class="card" style="border-top:3px solid var(--blue)"><h3>Hier — '+yesterday+'</h3><div style="display:grid;grid-template-columns:1fr 1fr;gap:12px"><div><div style="font-size:11px;color:var(--text3)">Vues</div><div style="font-size:22px;font-weight:800;color:var(--purple)">'+fm(tvY)+'</div></div><div><div style="font-size:11px;color:var(--text3)">Likes</div><div style="font-size:22px;font-weight:800;color:var(--accent)">'+fm(tlY)+'</div></div><div><div style="font-size:11px;color:var(--text3)">Posts</div><div style="font-size:22px;font-weight:800">'+tpY+'</div></div><div><div style="font-size:11px;color:var(--text3)">Engagement</div><div style="font-size:22px;font-weight:800;color:var(--green)">'+engY+'%</div></div></div></div></div>';
+h+='<div class="card"><h3><span class="dot"></span>Evolution</h3><div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px"><div style="text-align:center"><div style="font-size:11px;color:var(--text3)">Vues</div><div style="font-size:18px;font-weight:700;color:'+diffCol(tvT,tvY)+'">'+diff(tvT,tvY)+'</div></div><div style="text-align:center"><div style="font-size:11px;color:var(--text3)">Likes</div><div style="font-size:18px;font-weight:700;color:'+diffCol(tlT,tlY)+'">'+diff(tlT,tlY)+'</div></div><div style="text-align:center"><div style="font-size:11px;color:var(--text3)">Posts</div><div style="font-size:18px;font-weight:700;color:'+diffCol(tpT,tpY)+'">'+diff(tpT,tpY)+'</div></div><div style="text-align:center"><div style="font-size:11px;color:var(--text3)">Engagement</div><div style="font-size:18px;font-weight:700;color:'+diffCol(parseFloat(engT),parseFloat(engY))+'">'+diff(parseFloat(engT),parseFloat(engY))+'</div></div></div></div>';
+document.getElementById('dashArea').innerHTML=h})}
+
+function loadLB(){var h='<div class="picker"><input type="date" id="lbDate" value="'+dDate(0)+'"><button class="btn-sm" onclick="loadLBData()">Charger</button></div><div id="lbArea"><p style="color:var(--text3);text-align:center;padding:40px">Chargement...</p></div>';document.getElementById('content').innerHTML=h;loadLBData()}
+function loadLBData(){var date=document.getElementById('lbDate').value;af('/api/leaderboard?date='+date).then(function(d){var r=d.rankings;var h='<h3 style="margin-bottom:16px;color:var(--text2);font-size:13px">'+platEmoji()+' Classement '+platLabel()+' — '+date+'</h3>';if(r.length>=3){h+='<div style="display:flex;justify-content:center;align-items:flex-end;gap:20px;margin-bottom:24px">';h+=podium(r[1],'🥈','110px','var(--text3)');h+=podium(r[0],'🥇','140px','var(--orange)');h+=podium(r[2],'🥉','90px','var(--text3)');h+='</div>'}h+='<div class="card"><table class="tbl"><thead><tr><th>#</th><th>VA</th><th>Badge</th><th>Posts</th><th>Vues</th><th>Likes</th><th>Score</th><th>Engage.</th></tr></thead><tbody>';r.forEach(function(x,i){var m=i<3?['🥇','🥈','🥉'][i]:''+(i+1);var cls=Number(x.post_count)>=6?'ok':'warn';h+='<tr onclick="openVA(\''+x.va_discord_id+'\',\''+x.va_name+'\')"><td>'+m+'</td><td><b>'+x.va_name+'</b></td><td>'+vaBadge(x.badge)+'</td><td class="'+cls+'">'+x.post_count+'/6</td><td>'+fm(Number(x.total_views))+'</td><td>'+fm(Number(x.total_likes))+'</td><td style="color:var(--orange);font-weight:600">'+fm(x.total_score)+'</td><td>'+x.engagement_rate+'%</td></tr>'});h+='</tbody></table></div>';document.getElementById('lbArea').innerHTML=h})}
+
+var TOP_POSTS_DATA=[],TOP_FILTER='all',TOP_VA='all';
+function loadTop(){var h='<div class="picker"><input type="date" id="topDate" value="'+dDate(0)+'"><button class="btn-sm" onclick="loadTopData()">Charger</button><select id="topFilter" onchange="TOP_FILTER=this.value;renderTopPosts()"><option value="all">Tous</option><option value="viral">🔥 Viral</option><option value="bon">✅ Bon</option><option value="moyen">➡️ Moyen</option><option value="flop">⬇️ Flop</option></select><select id="topVa" onchange="TOP_VA=this.value;renderTopPosts()"><option value="all">Tous les VA</option></select><input type="text" id="topSearch" placeholder="Rechercher..." oninput="renderTopPosts()"></div><div id="topArea"><p style="color:var(--text3);text-align:center;padding:40px">Chargement...</p></div>';document.getElementById('content').innerHTML=h;loadTopData()}
+function loadTopData(){var date=document.getElementById('topDate').value;af('/api/top-posts?date='+date).then(function(d){TOP_POSTS_DATA=d.posts;var vas=[...new Set(d.posts.map(function(p){return p.va_name}))];var sel=document.getElementById('topVa');sel.innerHTML='<option value="all">Tous les VA</option>';vas.forEach(function(v){sel.innerHTML+='<option value="'+v+'">'+v+'</option>'});renderTopPosts()})}
+function renderTopPosts(){var search=(document.getElementById('topSearch')?document.getElementById('topSearch').value:'').toLowerCase().trim();var filtered=TOP_POSTS_DATA.filter(function(p){var perf=p.perf||perfOf(Number(p.views)||0);if(TOP_FILTER!=='all'&&perf!==TOP_FILTER)return false;if(TOP_VA!=='all'&&p.va_name!==TOP_VA)return false;if(search&&p.va_name.toLowerCase().indexOf(search)===-1)return false;return true});var h='<div class="card"><h3><span class="dot"></span>'+filtered.length+' post(s) — '+platLabel()+'</h3>';if(filtered.length===0){h+='<p style="color:var(--text3);text-align:center;padding:20px">Aucun post</p>'}else{filtered.forEach(function(p){var perf=p.perf||perfOf(Number(p.views)||0);var score=p.score||scoreOf(p);var eng=p.engagement||engOf(p);h+='<div class="post-card" style="border-left:3px solid '+perfColor(perf)+'"><div class="post-header"><div><span style="font-weight:700;font-size:14px">'+p.va_name+'</span> '+perfBadge(perf)+'<div style="font-size:11px;color:var(--text3);margin-top:4px">'+(p.ig_post_id||'')+' | '+new Date(p.created_at).toLocaleString('fr-FR')+'</div></div><a href="'+p.url+'" target="_blank" class="post-link" style="color:var(--accent);border-color:var(--accent)">'+platLinkLabel()+'</a></div><div class="post-stats"><span>👁️ '+(p.views||0)+' vues</span><span>❤️ '+(p.likes||0)+'</span><span>💬 '+(p.comments||0)+'</span><span>🏆 '+fm(score)+'</span><span>📊 '+(eng*100).toFixed(1)+'%</span></div></div>'})}h+='</div>';document.getElementById('topArea').innerHTML=h}
+
+function loadReco(){var h='<div class="picker"><input type="date" id="recoDate" value="'+dDate(0)+'"><button class="btn-sm" onclick="loadRecoData()">Analyser</button></div><div id="recoArea"><p style="color:var(--text3);text-align:center;padding:40px">Chargement...</p></div>';document.getElementById('content').innerHTML=h;loadRecoData()}
+function loadRecoData(){var date=document.getElementById('recoDate').value;af('/api/recommendations?date='+date).then(function(d){var h='';var k=d.kpis;h+='<div class="kpis">';h+=kpi('📝',''+k.totalPosts,'Posts total','','blue');h+=kpi('✅',k.pctPerf+'%','Posts performants','','green');h+=kpi('⬇️',k.pctFlop+'%','Posts faibles','','red');h+=kpi('🔁',''+k.toRepost,'A reposter','','orange');h+=kpi('💎',''+d.nuggets.length,'Pepites','','purple');h+='</div>';
+h+='<div class="card"><h3><span class="dot" style="background:var(--green)"></span>Distribution</h3><div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:8px">';var cats=[{k:'viral',l:'🔥 Viral',c:'var(--viral)'},{k:'bon',l:'✅ Bon',c:'var(--green)'},{k:'moyen',l:'➡️ Moyen',c:'var(--orange)'},{k:'flop',l:'⬇️ Flop',c:'var(--red)'}];cats.forEach(function(cat){var pct=k.totalPosts>0?Math.round(k.perfCount[cat.k]/k.totalPosts*100):0;h+='<div style="flex:1;min-width:120px;background:var(--bg3);border-radius:10px;padding:14px;text-align:center;border-top:3px solid '+cat.c+'"><div style="font-size:24px;font-weight:800;color:'+cat.c+'">'+k.perfCount[cat.k]+'</div><div style="font-size:11px;color:var(--text3);margin-top:4px">'+cat.l+' ('+pct+'%)</div></div>'});h+='</div></div>';
+if(d.nuggets.length>0){h+='<div class="card" style="border-top:3px solid var(--purple)"><h3>💎 Pepites a scaler</h3>';d.nuggets.forEach(function(p){var eng=p.engagement||engOf(p);var perf=perfOf(Number(p.views)||0);h+='<div class="post-card" style="border-left:3px solid '+perfColor(perf)+'"><div class="post-header"><div><span style="font-weight:700">'+p.va_name+'</span> '+perfBadge(perf)+'</div><a href="'+p.url+'" target="_blank" class="post-link" style="color:var(--accent);border-color:var(--accent)">'+platLinkLabel()+'</a></div><div class="post-stats"><span>👁️ '+(p.views||0)+'</span><span>❤️ '+(p.likes||0)+'</span><span>💬 '+(p.comments||0)+'</span><span>📊 '+(eng*100).toFixed(1)+'%</span></div></div>'});h+='</div>'}
+document.getElementById('recoArea').innerHTML=h})}
+
+function loadSaved(){var h='<div style="margin-bottom:16px"><input type="text" id="savedSearch" placeholder="Rechercher..." oninput="renderSaved()" style="width:100%;padding:12px 16px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:13px;outline:none"></div><div id="savedArea"><p style="color:var(--text3);text-align:center;padding:40px">Chargement...</p></div>';document.getElementById('content').innerHTML=h;af('/api/saved-posts?limit=100').then(function(d){window.SAVED_DATA=d.posts;renderSaved()})}
+function renderSaved(){var posts=window.SAVED_DATA||[];var search=(document.getElementById('savedSearch')?document.getElementById('savedSearch').value:'').toLowerCase().trim();if(search){posts=posts.filter(function(p){return(p.va_name||'').toLowerCase().indexOf(search)!==-1||(p.caption||'').toLowerCase().indexOf(search)!==-1})}var h='<div class="card"><h3><span class="dot" style="background:var(--green)"></span>'+posts.length+' meilleurs posts — '+platLabel()+'</h3>';if(posts.length===0){h+='<p style="color:var(--text3);text-align:center;padding:20px">Aucun post</p>'}else{posts.forEach(function(p){var perf=p.perf||perfOf(Number(p.views)||0);var eng=p.engagement||engOf(p);h+='<div class="post-card" style="border-left:3px solid '+perfColor(perf)+'"><div class="post-header"><div><span style="font-weight:700">'+p.va_name+'</span> '+perfBadge(perf)+'</div><a href="'+p.url+'" target="_blank" class="post-link" style="color:var(--accent);border-color:var(--accent)">'+platLinkLabel()+'</a></div><div class="post-stats"><span>👁️ '+(p.views||0)+'</span><span>❤️ '+(p.likes||0)+'</span><span>💬 '+(p.comments||0)+'</span><span>📊 '+(eng*100).toFixed(1)+'%</span></div></div>'})}h+='</div>';document.getElementById('savedArea').innerHTML=h}
+
+function loadHeat(){var h='<div class="picker"><select id="heatDays"><option value="3">3 jours</option><option value="7" selected>7 jours</option><option value="14">14 jours</option><option value="30">30 jours</option></select><button class="btn-sm" onclick="loadHeatData()">Analyser</button></div><div id="heatArea"><p style="color:var(--text3);text-align:center;padding:40px">Chargement...</p></div>';document.getElementById('content').innerHTML=h;loadHeatData()}
+function loadHeatData(){var days=document.getElementById('heatDays').value;af('/api/heatmap?days='+days).then(function(d){var hrs=d.hours;var maxV=Math.max.apply(null,hrs.map(function(h){return h.avg_views}).concat([1]));
+var sorted=hrs.slice().filter(function(h){return h.post_count>0}).sort(function(a,b){return b.avg_views-a.avg_views});
+var best3=sorted.slice(0,3).map(function(h){return h.hour});var worst3=sorted.slice(-3).map(function(h){return h.hour});
+var h='<h3 style="margin-bottom:16px;color:var(--text2);font-size:13px">'+platEmoji()+' '+platLabel()+' — Heatmap '+days+' jours</h3>';
+h+='<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-bottom:20px">';
+h+='<div class="card" style="border-top:3px solid var(--green)"><h3>🟢 Meilleures heures</h3>';best3.forEach(function(hr){var data=hrs[hr];h+='<div style="display:flex;justify-content:space-between;padding:10px;background:var(--bg3);border-radius:8px;margin-bottom:6px"><div style="font-weight:700;font-size:16px;color:var(--green)">'+hr+'h</div><div style="text-align:right;font-size:12px"><div style="color:var(--purple);font-weight:600">'+fm(data.avg_views)+' vues</div><div style="color:var(--text3)">'+data.post_count+' posts</div></div></div>'});h+='</div>';
+h+='<div class="card" style="border-top:3px solid var(--orange)"><h3>🟡 Heures moyennes</h3>';var mid=sorted.slice(3,-3);if(mid.length===0){h+='<p style="color:var(--text3);text-align:center;padding:12px">Pas assez</p>'}else{mid.slice(0,4).forEach(function(data){h+='<div style="display:flex;justify-content:space-between;padding:10px;background:var(--bg3);border-radius:8px;margin-bottom:6px"><div style="font-weight:700;font-size:16px;color:var(--orange)">'+data.hour+'h</div><div style="text-align:right;font-size:12px"><div style="color:var(--purple);font-weight:600">'+fm(data.avg_views)+' vues</div></div></div>'})}h+='</div>';
+h+='<div class="card" style="border-top:3px solid var(--red)"><h3>🔴 Mauvaises heures</h3>';worst3.forEach(function(hr){var data=hrs[hr];h+='<div style="display:flex;justify-content:space-between;padding:10px;background:var(--bg3);border-radius:8px;margin-bottom:6px"><div style="font-weight:700;font-size:16px;color:var(--red)">'+hr+'h</div><div style="text-align:right;font-size:12px"><div style="color:var(--purple);font-weight:600">'+fm(data.avg_views)+' vues</div></div></div>'});h+='</div></div>';
+h+='<div class="card"><h3><span class="dot"></span>Heatmap</h3><div style="display:grid;grid-template-columns:repeat(12,1fr);gap:6px;margin-top:16px">';
+for(var i=0;i<24;i++){var data=hrs[i];var intensity=maxV>0?data.avg_views/maxV:0;var col;if(data.post_count===0){col='var(--bg3)'}else if(intensity>=0.7){col='rgba(16,185,129,'+Math.max(0.3,intensity)+')'}else if(intensity>=0.3){col='rgba(245,158,11,'+Math.max(0.3,intensity)+')'}else{col='rgba(239,68,68,'+Math.max(0.2,intensity*2)+')'}h+='<div style="background:'+col+';border-radius:8px;padding:12px 8px;text-align:center;border:1px solid var(--border);min-height:80px;display:flex;flex-direction:column;justify-content:center"><div style="font-weight:800;font-size:14px">'+i+'h</div><div style="font-size:11px;color:var(--text2);margin-top:4px">'+fm(data.avg_views)+'</div><div style="font-size:9px;color:var(--text3)">'+data.post_count+' posts</div></div>'}
+h+='</div></div>';
+h+='<div class="card"><h3><span class="dot"></span>Vues moyennes par heure</h3><div class="bars">';for(var j=0;j<24;j++){var dd=hrs[j];var ht=Math.max(2,(dd.avg_views/maxV)*170);var barCol=dd.post_count===0?'var(--bg4)':dd.avg_views>=maxV*0.7?'var(--green)':dd.avg_views>=maxV*0.3?'var(--orange)':'var(--red)';h+='<div class="bar-w"><div class="bar-v">'+fm(dd.avg_views)+'</div><div class="bar" style="height:'+ht+'px;background:'+barCol+'"></div><div class="bar-l">'+j+'h</div></div>'}h+='</div></div>';
+document.getElementById('heatArea').innerHTML=h})}
+
+function openVA(id,name){var date=new Date().toISOString().split('T')[0];if(document.getElementById('lbDate'))date=document.getElementById('lbDate').value||date;af('/api/va/'+id+'?date='+date).then(function(d){var h='<h2>'+name+' <button class="close" onclick="closeModal()">✕</button></h2>';if(d.stats){var tv=Number(d.stats.total_views),tl=Number(d.stats.total_likes),tc=Number(d.stats.total_comments);var eng=tv>0?((tl+tc)/tv*100).toFixed(1):'0.0';var score=tl+tc*3;var avgV=Number(d.stats.post_count)>0?Math.round(tv/Number(d.stats.post_count)):0;var badge=avgV>=2000?'top':avgV>=500?'bon':'faible';h+='<div style="margin-bottom:16px">'+vaBadge(badge)+'</div>';h+='<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:20px">';h+='<div class="kpi" style="padding:12px"><div style="font-size:10px;color:var(--text3)">Posts</div><div style="font-size:16px;font-weight:700">'+d.stats.post_count+'/6</div></div>';h+='<div class="kpi" style="padding:12px"><div style="font-size:10px;color:var(--text3)">Vues</div><div style="font-size:16px;font-weight:700;color:var(--purple)">'+fm(tv)+'</div></div>';h+='<div class="kpi" style="padding:12px"><div style="font-size:10px;color:var(--text3)">Likes</div><div style="font-size:16px;font-weight:700;color:var(--accent)">'+fm(tl)+'</div></div>';h+='<div class="kpi" style="padding:12px"><div style="font-size:10px;color:var(--text3)">Score</div><div style="font-size:16px;font-weight:700;color:var(--orange)">'+fm(score)+'</div></div>';h+='<div class="kpi" style="padding:12px"><div style="font-size:10px;color:var(--text3)">Engage.</div><div style="font-size:16px;font-weight:700;color:var(--green)">'+eng+'%</div></div></div>'}d.posts.forEach(function(p,idx){var last=p.snapshots.length>0?p.snapshots[p.snapshots.length-1]:{views:0,likes:0,comments:0,shares:0};var perf=p.performance||perfOf(Number(last.views));var score=p.score||scoreOf(last);var eng=p.engagement||engOf(last);h+='<div class="post-card" style="border-left:3px solid '+perfColor(perf)+'"><div class="post-header"><div><span style="font-weight:700">Post '+(idx+1)+'</span> '+perfBadge(perf)+'</div><a href="'+p.post.url+'" target="_blank" class="post-link" style="color:var(--accent);border-color:var(--accent)">'+platLinkLabel()+'</a></div><div class="post-stats"><span>👁️ '+last.views+'</span><span>❤️ '+last.likes+'</span><span>💬 '+last.comments+'</span><span>🏆 '+fm(score)+'</span><span>📊 '+(eng*100).toFixed(1)+'%</span></div>';if(p.milestones){h+='<div style="display:flex;gap:10px;margin-top:12px"><div class="milestone"><div class="ms-val">'+(p.milestones.h1!=null?fm(p.milestones.h1):'-')+'</div><div class="ms-lbl">1h</div></div><div class="milestone"><div class="ms-val">'+(p.milestones.h3!=null?fm(p.milestones.h3):'-')+'</div><div class="ms-lbl">3h</div></div><div class="milestone"><div class="ms-val">'+(p.milestones.h6!=null?fm(p.milestones.h6):'-')+'</div><div class="ms-lbl">6h</div></div></div>'}if(p.snapshots.length>1){h+='<div style="margin-top:12px"><div style="font-size:11px;color:var(--text3);margin-bottom:8px">Evolution</div><div class="bars" style="height:100px">';var mxv=Math.max.apply(null,p.snapshots.map(function(s){return Number(s.views)}).concat([1]));p.snapshots.forEach(function(s){var ht=Math.max(2,(Number(s.views)/mxv)*80);var time=new Date(s.scraped_at).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});h+='<div class="bar-w"><div class="bar-v">'+s.views+'</div><div class="bar" style="height:'+ht+'px;background:'+perfColor(perfOf(Number(s.views)))+'"></div><div class="bar-l">'+time+'</div></div>'});h+='</div></div>'}h+='</div>'});if(d.posts.length===0)h+='<p style="color:var(--text3);text-align:center;padding:20px">Aucun post ce jour</p>';document.getElementById('modalContent').innerHTML=h;document.getElementById('modalBg').classList.add('show')})}
+function closeModal(){document.getElementById('modalBg').classList.remove('show')}
+
+function kpi(icon,val,lbl,trend,color){var colors={pink:'var(--accent)',blue:'var(--blue)',purple:'var(--purple)',green:'var(--green)',orange:'var(--orange)'};var c=colors[color]||'var(--accent)';return'<div class="kpi"><div class="glow" style="background:'+c+'"></div><div class="icon">'+icon+'</div><div class="val" style="color:'+c+'">'+val+'</div><div class="lbl">'+lbl+'</div>'+(trend?'<div class="trend" style="color:var(--text3)">'+trend+'</div>':'')+'</div>'}
+function gauge(pct){var r=52,c=2*Math.PI*r,off=c-(pct/100)*c;var col=pct>=80?'var(--green)':pct>=50?'var(--orange)':'var(--red)';return'<div class="gauge-wrap"><div class="gauge"><svg width="120" height="120"><circle cx="60" cy="60" r="'+r+'" fill="none" stroke="var(--bg3)" stroke-width="10"/><circle cx="60" cy="60" r="'+r+'" fill="none" stroke="'+col+'" stroke-width="10" stroke-dasharray="'+c+'" stroke-dashoffset="'+off+'" stroke-linecap="round"/></svg><div class="gauge-text"><div class="pct" style="color:'+col+'">'+pct+'%</div><div class="sub">objectif</div></div></div></div>'}
+function podium(va,medal,ht,borderCol){var tv=Number(va.total_views);var eng=tv>0?((Number(va.total_likes)+Number(va.total_comments))/tv*100).toFixed(1):'0';return'<div style="text-align:center;width:140px"><div style="font-size:32px;margin-bottom:8px">'+medal+'</div><div style="background:var(--bg3);border-radius:12px 12px 0 0;height:'+ht+';display:flex;flex-direction:column;justify-content:center;align-items:center;padding:12px;border-top:3px solid '+borderCol+'"><div style="font-weight:700;font-size:14px">'+va.va_name+'</div>'+vaBadge(va.badge||'faible')+'<div style="font-size:20px;font-weight:800;color:var(--purple);margin-top:4px">'+fm(tv)+'</div><div style="font-size:10px;color:var(--text3)">vues</div><div style="font-size:12px;color:var(--green);margin-top:2px">📊 '+eng+'%</div></div></div>'}
+
+setInterval(function(){var a=document.querySelector('.nav-item.on');if(a&&a.textContent==='Dashboard'&&DASH_MODE==='today')loadDashData()},60000);
+</script>
+</body>
+</html>
