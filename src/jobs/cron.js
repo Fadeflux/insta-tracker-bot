@@ -68,7 +68,19 @@ function initCronJobs(client) {
     } catch (err) { console.error('Account inactivity sweep failed', err.message); }
   }, { timezone: config.timezone });
 
-  console.log('Cron jobs initialized (multi-platform)');
+  // ==================== GAMIFICATION ====================
+
+  // Award daily points — 23:58 Europe/Paris (just before the daily summary).
+  cron.schedule('58 23 * * *', async function() {
+    try { await runForEachPlatform(awardDailyPointsForPlatform); } catch (err) { console.error('Daily points cron failed', err.message); }
+  }, { timezone: config.timezone });
+
+  // Every Sunday at 21:00 Europe/Paris: announce weekly winner + resolve duels + create new duels for next week
+  cron.schedule('0 21 * * 0', async function() {
+    try { await runForEachPlatform(runWeeklyCeremony); } catch (err) { console.error('Weekly ceremony failed', err.message); }
+  }, { timezone: config.timezone });
+
+  console.log('Cron jobs initialized (multi-platform, gamification)');
 }
 
 // Run a function for each active platform
@@ -134,25 +146,27 @@ async function sendPostReminder(platform) {
 
 async function sendPostAlert(platform, requiredPosts) {
   var alertsChannel = await getChannel(platform, 'alerts');
-  if (!alertsChannel) return;
   var platConfig = config.platforms[platform];
   var vaMembers = await getVaMembers(platform);
   if (vaMembers.length === 0) return;
 
   var today = new Date().toISOString().split('T')[0];
   var lateVAs = [];
+  var onTrackVAs = [];
+
+  // Fetch current leaderboard once to reuse in personalized DMs
+  await db.computeDailySummary(today, platform);
+  var leaderboard = await db.getLeaderboard(today, platform);
+  var topThree = leaderboard.slice(0, 3);
 
   for (var j = 0; j < vaMembers.length; j++) {
     var member = vaMembers[j];
     var posts = await db.getVaPostsToday(member.id, today, platform);
     if (posts.length < requiredPosts) {
       lateVAs.push({ id: member.id, name: member.displayName, postCount: posts.length });
+    } else {
+      onTrackVAs.push({ id: member.id, name: member.displayName, postCount: posts.length });
     }
-  }
-
-  if (lateVAs.length === 0) {
-    await alertsChannel.send({ content: '✅ **' + embeds.getPlatformEmoji(platform) + ' Tout le monde est a jour sur ' + embeds.getPlatformLabel(platform) + ' !** Tous les VA ont au moins **' + requiredPosts + ' post(s)**.' });
-    return;
   }
 
   var timeLabels = {
@@ -162,19 +176,49 @@ async function sendPostAlert(platform, requiredPosts) {
   };
   var times = timeLabels[requiredPosts];
 
-  var lines = lateVAs.map(function(va) {
-    return '⚠️ <@' + va.id + '> : **' + va.postCount + '/' + requiredPosts + '** posts';
-  });
+  // All good → short public confirmation (no DM needed)
+  if (lateVAs.length === 0) {
+    if (alertsChannel) {
+      await alertsChannel.send({ content: '✅ **' + embeds.getPlatformEmoji(platform) + ' Tout le monde est a jour sur ' + embeds.getPlatformLabel(platform) + ' !** Tous les VA ont au moins **' + requiredPosts + ' post(s)**.' });
+    }
+    return;
+  }
 
-  await alertsChannel.send({
-    content: '**' + embeds.getPlatformEmoji(platform) + ' Alerte Posts — ' + embeds.getPlatformLabel(platform) + ' !**\n\n' +
-      '🇧🇯 **' + times.benin + '** (Benin) | 🇲🇬 **' + times.mada + '** (Madagascar)\n\n' +
-      'Les VA suivants n\'ont pas encore atteint **' + requiredPosts + ' post(s)** :\n\n' +
-      lines.join('\n') + '\n\n' +
-      'Envoyez vos liens dans <#' + platConfig.channels.links + '> !'
-  });
+  // Send personalized DM to each late VA
+  var dmSuccessCount = 0;
+  for (var k = 0; k < lateVAs.length; k++) {
+    var va = lateVAs[k];
+    var topThreeLine = topThree.length > 0
+      ? '\n\n**📊 Top 3 actuel sur ' + embeds.getPlatformLabel(platform) + ' :**\n' +
+        topThree.map(function(t, i) { return ['🥇','🥈','🥉'][i] + ' ' + t.va_name + ' — ' + t.post_count + ' posts'; }).join('\n')
+      : '';
 
-  console.log('[' + platform.toUpperCase() + '] Alert ' + requiredPosts + ': ' + lateVAs.length + ' VAs late');
+    var urgency = '';
+    if (requiredPosts === 1) urgency = 'La journee commence, garde le rythme ! 💪';
+    else if (requiredPosts === 2) urgency = 'Mi-journee — tu peux encore remonter dans le classement.';
+    else urgency = 'Derniere ligne droite — plus que quelques heures pour eviter de perdre ton streak.';
+
+    var msg = '👋 Salut ' + va.name + ' !\n\n' +
+      '⏰ Il est **' + times.benin + '** (Benin) / **' + times.mada + '** (Madagascar).\n' +
+      '📝 Tu es a **' + va.postCount + '/' + requiredPosts + ' posts** aujourd\'hui.\n\n' +
+      urgency + topThreeLine + '\n\n' +
+      '👉 Envoie tes liens dans le channel #links du serveur ' + embeds.getPlatformLabel(platform) + '.';
+
+    var ok = await sendVaDM(va.id, msg);
+    if (ok) dmSuccessCount++;
+  }
+
+  // Public summary (without @mentions) — useful for managers watching the channel
+  if (alertsChannel) {
+    await alertsChannel.send({
+      content: '**' + embeds.getPlatformEmoji(platform) + ' Point de la journee — ' + embeds.getPlatformLabel(platform) + '** (' + times.benin + ' Benin / ' + times.mada + ' Mada)\n\n' +
+        '✅ **' + onTrackVAs.length + '** VA a jour (' + requiredPosts + '+ posts)\n' +
+        '⚠️ **' + lateVAs.length + '** VA en retard — DM envoye a ' + dmSuccessCount + '/' + lateVAs.length + ' (les autres ont bloque les DMs du bot)\n\n' +
+        '_Les VA en retard :_ ' + lateVAs.map(function(v) { return v.name + ' (' + v.postCount + '/' + requiredPosts + ')'; }).join(', ')
+    });
+  }
+
+  console.log('[' + platform.toUpperCase() + '] Alert ' + requiredPosts + ': ' + lateVAs.length + ' VAs late, ' + dmSuccessCount + ' DMs delivered');
 }
 
 async function sendDailySummaryForPlatform(platform) {
@@ -389,4 +433,121 @@ async function sendPerformanceDropAlert(platform) {
   console.log('[' + platform.toUpperCase() + '] Performance drop alert: ' + drops.length + ' VAs');
 }
 
-module.exports = { initCronJobs: initCronJobs, sendDailySummaryForPlatform: sendDailySummaryForPlatform };
+async function awardDailyPointsForPlatform(platform) {
+  var today = new Date().toISOString().split('T')[0];
+  try {
+    await db.computeDailySummary(today, platform);
+    var awarded = await db.awardDailyPoints(today, platform);
+    if (awarded.length === 0) {
+      console.log('[' + platform.toUpperCase() + '] No points awarded today (no one hit 6 posts)');
+      return;
+    }
+    var resultsChannel = await getChannel(platform, 'results');
+    if (!resultsChannel) return;
+
+    var medals = ['🥇', '🥈', '🥉'];
+    var lines = awarded.map(function(r, i) {
+      return medals[i] + ' **' + r.va_name + '** — **+' + r.points + ' pts** (' + fmt(Number(r.total_views)) + ' vues)';
+    });
+
+    var bounds = db.getWeekBounds(today);
+    var standings = await db.getWeeklyStandings(bounds.start, bounds.end, platform);
+    var standingsLines = standings.slice(0, 5).map(function(s, i) {
+      return (i + 1) + '. **' + s.va_name + '** — ' + s.total_points + ' pts';
+    });
+
+    await resultsChannel.send({
+      content: '**' + embeds.getPlatformEmoji(platform) + ' Points du jour — ' + today + '**\n\n' +
+        lines.join('\n') + '\n\n' +
+        '**📊 Classement de la semaine :**\n' + (standingsLines.join('\n') || '_Pas encore de points_') + '\n\n' +
+        '_Le #1 de la semaine est couronne champion dimanche soir._'
+    });
+    console.log('[' + platform.toUpperCase() + '] Daily points awarded: ' + awarded.length + ' VAs');
+  } catch (err) {
+    console.error('awardDailyPointsForPlatform failed for ' + platform + ':', err.message);
+  }
+}
+
+async function runWeeklyCeremony(platform) {
+  try {
+    var today = new Date();
+    var bounds = db.getWeekBounds(today);
+
+    // 1) Announce weekly winner
+    var winner = await db.recordWeeklyWinner(bounds.start, bounds.end, platform);
+    var resultsChannel = await getChannel(platform, 'results');
+
+    if (winner && resultsChannel) {
+      await resultsChannel.send({
+        content: '🏆🏆🏆 **CHAMPION DE LA SEMAINE — ' + embeds.getPlatformLabel(platform) + '** 🏆🏆🏆\n\n' +
+          '**<@' + winner.va_discord_id + '>** remporte la semaine du ' + bounds.start + ' au ' + bounds.end + ' !\n\n' +
+          '🎯 Total points : **' + winner.total_points + '**\n' +
+          '👁️ Vues cumulees : **' + fmt(Number(winner.total_views)) + '**\n' +
+          '📝 Posts publies : **' + winner.total_posts + '**\n\n' +
+          'Bravo ' + winner.va_name + ' ! 🎉\n\n' +
+          'A tous les autres : continuez comme ca et vous serez le champion de la semaine prochaine. 💪'
+      });
+      console.log('[' + platform.toUpperCase() + '] Weekly winner announced: ' + winner.va_name);
+    }
+
+    // 2) Resolve current duels and announce results
+    var resolvedDuels = await db.resolveWeeklyDuels(bounds.start, bounds.end, platform);
+    if (resolvedDuels.length > 0 && resultsChannel) {
+      var duelLines = resolvedDuels.map(function(d) {
+        if (!d.winner_id) {
+          return '🤝 <@' + d.va1_discord_id + '> vs <@' + d.va2_discord_id + '> — EGALITE (' + fmt(Number(d.va1_views)) + ' vs ' + fmt(Number(d.va2_views)) + ')';
+        }
+        var isV1 = d.winner_id === d.va1_discord_id;
+        var winId = isV1 ? d.va1_discord_id : d.va2_discord_id;
+        var loserId = isV1 ? d.va2_discord_id : d.va1_discord_id;
+        var winViews = isV1 ? d.va1_views : d.va2_views;
+        var loseViews = isV1 ? d.va2_views : d.va1_views;
+        return '⚔️ <@' + winId + '> **bat** <@' + loserId + '> — ' + fmt(Number(winViews)) + ' vs ' + fmt(Number(loseViews)) + ' vues';
+      });
+      await resultsChannel.send({
+        content: '**⚔️ Resultats des duels de la semaine — ' + embeds.getPlatformLabel(platform) + '**\n\n' +
+          duelLines.join('\n') + '\n\n' +
+          '_Perdants : message de felicitations obligatoire au gagnant. Les nouveaux duels de la semaine prochaine arrivent !_'
+      });
+    }
+
+    // 3) Create next week's duels (starts tomorrow = Monday)
+    var nextMonday = new Date(today);
+    nextMonday.setDate(today.getDate() + 1); // Sunday + 1 = Monday
+    var nextBounds = db.getWeekBounds(nextMonday);
+    var vaMembers = await getVaMembers(platform);
+    var vaList = vaMembers.map(function(m) { return { id: m.id, name: m.displayName }; });
+    var newDuels = await db.createWeeklyDuels(nextBounds.start, nextBounds.end, platform, vaList);
+
+    if (newDuels.length > 0 && resultsChannel) {
+      var newDuelLines = newDuels.map(function(d, i) {
+        return '⚔️ **Duel #' + (i + 1) + '** : <@' + d.va1_discord_id + '> VS <@' + d.va2_discord_id + '>';
+      });
+      var oddVA = vaList.length % 2 === 1 ? '\n\n_' + vaList[vaList.length - 1].name + ' se repose cette semaine (nombre impair de VA)._' : '';
+      await resultsChannel.send({
+        content: '**⚔️ DUELS DE LA SEMAINE — ' + embeds.getPlatformLabel(platform) + '**\n' +
+          'Du lundi ' + nextBounds.start + ' au dimanche ' + nextBounds.end + '\n\n' +
+          newDuelLines.join('\n') + '\n\n' +
+          '_Celui qui fait le plus de vues cumulees gagne. Le perdant doit poster un message de felicitations au gagnant dimanche soir._' +
+          oddVA
+      });
+    }
+  } catch (err) {
+    console.error('runWeeklyCeremony failed for ' + platform + ':', err.message);
+  }
+}
+
+// Send a private DM to a VA. Silently no-ops if DM fails (user blocked bot etc.)
+async function sendVaDM(discordId, content) {
+  if (!discordClient) return false;
+  try {
+    var user = await discordClient.users.fetch(discordId);
+    await user.send({ content: content });
+    return true;
+  } catch (e) {
+    console.log('[DM] Could not DM ' + discordId + ': ' + e.message);
+    return false;
+  }
+}
+
+module.exports = { initCronJobs: initCronJobs, sendDailySummaryForPlatform: sendDailySummaryForPlatform, sendVaDM: sendVaDM };
