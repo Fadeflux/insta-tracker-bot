@@ -396,7 +396,7 @@ function createWebServer() {
     if (!username || username.length < 2) return res.status(400).json({ error: 'Username trop court (min 2 caracteres)' });
     if (!password || password.length < 4) return res.status(400).json({ error: 'Mot de passe trop court (min 4 caracteres)' });
     if (['admin', 'manager', 'va'].indexOf(role) === -1) return res.status(400).json({ error: 'Role invalide (admin, manager, va)' });
-    if (['all', 'instagram', 'twitter'].indexOf(platform) === -1) return res.status(400).json({ error: 'Plateforme invalide (all, instagram, twitter)' });
+    if (['all', 'instagram', 'twitter', 'geelark'].indexOf(platform) === -1) return res.status(400).json({ error: 'Plateforme invalide' });
 
     var isNew = !DASHBOARD_USERS[username];
     DASHBOARD_USERS[username] = { password: password, role: role, platform: platform };
