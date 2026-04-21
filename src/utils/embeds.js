@@ -15,15 +15,21 @@ var COLORS = {
 };
 
 function getPlatformColor(platform) {
-  return platform === 'twitter' ? COLORS.twitter : COLORS.instagram;
+  if (platform === 'twitter') return COLORS.twitter;
+  if (platform === 'geelark') return 0x00c853;
+  return COLORS.instagram;
 }
 
 function getPlatformEmoji(platform) {
-  return platform === 'twitter' ? '🐦' : '📸';
+  if (platform === 'twitter') return '🐦';
+  if (platform === 'geelark') return '📱';
+  return '📸';
 }
 
 function getPlatformLabel(platform) {
-  return platform === 'twitter' ? 'Twitter/X' : 'Instagram';
+  if (platform === 'twitter') return 'Twitter/X';
+  if (platform === 'geelark') return 'Geelark Insta';
+  return 'Instagram';
 }
 
 function calcScore(stats) {
