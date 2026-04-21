@@ -22,12 +22,13 @@ function getRandomUA() {
 }
 
 async function scrapePost(url) {
-  var result = { views: 0, likes: 0, comments: 0, shares: 0 };
+  var result = { views: 0, likes: 0, comments: 0, shares: 0, username: null };
   var postId = extractId(url);
   if (!postId) { result.error = 'Invalid URL'; return result; }
 
   var isReel = url.includes('/reel/');
   var ua = getRandomUA();
+  var igUtils = require('../utils/instagram');
 
   try {
     // === STRATEGY 1: Embed with /captioned/ ===
@@ -49,6 +50,10 @@ async function scrapePost(url) {
     if (embedHtml.length > 0) {
       extractFromHtml(embedHtml, result);
       extractFromScripts(embedHtml, result);
+      if (!result.username) {
+        var u1 = igUtils.extractUsernameFromHtml(embedHtml);
+        if (u1) result.username = u1;
+      }
     }
 
     // === STRATEGY 2: Always try main/reel page to get better view count ===
@@ -61,6 +66,10 @@ async function scrapePost(url) {
         extractFromHtml(mainHtml, mainResult);
         extractFromScripts(mainHtml, mainResult);
         extractFromOgMeta(mainHtml, mainResult);
+        if (!result.username) {
+          var u2 = igUtils.extractUsernameFromHtml(mainHtml);
+          if (u2) result.username = u2;
+        }
       }
     } catch(e) {
       console.log('Main page fetch failed: ' + e.message);
@@ -92,6 +101,9 @@ async function scrapePost(url) {
                 result.views = media.video_view_count;
               if (media.edge_media_preview_comment && result.comments === 0)
                 result.comments = media.edge_media_preview_comment.count || 0;
+              if (!result.username && media.owner && media.owner.username) {
+                result.username = String(media.owner.username).toLowerCase();
+              }
               console.log('GraphQL parsed OK for ' + postId);
             }
           } catch(pe) {
@@ -119,6 +131,10 @@ async function scrapePost(url) {
               if (item.comment_count != null && item.comment_count > result.comments) result.comments = item.comment_count;
               if (item.play_count != null && item.play_count > result.views) result.views = item.play_count;
               if (item.view_count != null && item.view_count > result.views) result.views = item.view_count;
+              if (!result.username) {
+                if (item.user && item.user.username) result.username = String(item.user.username).toLowerCase();
+                else if (item.owner && item.owner.username) result.username = String(item.owner.username).toLowerCase();
+              }
               console.log('__a=1 parsed OK for ' + postId);
             }
           } catch(pe2) {
@@ -139,6 +155,10 @@ async function scrapePost(url) {
         if (embedHtml2.length > 0) {
           extractFromHtml(embedHtml2, result);
           extractFromScripts(embedHtml2, result);
+          if (!result.username) {
+            var u5 = igUtils.extractUsernameFromHtml(embedHtml2);
+            if (u5) result.username = u5;
+          }
         }
       } catch(e) {
         console.log('Embed direct fallback failed: ' + e.message);
