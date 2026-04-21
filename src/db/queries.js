@@ -58,7 +58,7 @@ async function getAllPermissions() {
 // ===== POSTS (with platform) =====
 // =============================================
 
-async function insertPost({ igPostId, url, vaDiscordId, vaName, caption, platform, guildId }) {
+async function insertPost({ igPostId, url, vaDiscordId, vaName, caption, platform, guildId, accountId, accountUsername }) {
   platform = platform || 'instagram';
   var postType = 'post';
   if (platform === 'instagram') {
@@ -66,9 +66,16 @@ async function insertPost({ igPostId, url, vaDiscordId, vaName, caption, platfor
   } else if (platform === 'twitter') {
     postType = 'tweet';
   }
-  var sql = "INSERT INTO posts (ig_post_id, url, va_discord_id, va_name, post_type, caption, platform, guild_id, tracking_end) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, (DATE_TRUNC('day', NOW() AT TIME ZONE 'Europe/Paris') + INTERVAL '23 hours 59 minutes') AT TIME ZONE 'Europe/Paris') ON CONFLICT (ig_post_id) DO NOTHING RETURNING *";
-  var result = await pool.query(sql, [igPostId, url, vaDiscordId, vaName, postType, caption || null, platform, guildId || null]);
+  var sql = "INSERT INTO posts (ig_post_id, url, va_discord_id, va_name, post_type, caption, platform, guild_id, account_id, account_username, tracking_end) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, (DATE_TRUNC('day', NOW() AT TIME ZONE 'Europe/Paris') + INTERVAL '23 hours 59 minutes') AT TIME ZONE 'Europe/Paris') ON CONFLICT (ig_post_id) DO NOTHING RETURNING *";
+  var result = await pool.query(sql, [igPostId, url, vaDiscordId, vaName, postType, caption || null, platform, guildId || null, accountId || null, accountUsername || null]);
   return result.rows[0] || null;
+}
+
+// Update account on an existing post (used when the scraper resolves the
+// IG username asynchronously after the post was already inserted).
+async function updatePostAccount(postId, accountId, accountUsername) {
+  var sql = 'UPDATE posts SET account_id = COALESCE(account_id, $1), account_username = COALESCE(account_username, $2) WHERE id = $3';
+  await pool.query(sql, [accountId || null, accountUsername || null, postId]);
 }
 
 async function getPost(id) {
@@ -428,8 +435,145 @@ async function getSavedBestPosts(limit, platform) {
 }
 
 // =============================================
-// ===== DASHBOARD USERS =====
+// ===== ACCOUNTS (per-handle tracking) =====
 // =============================================
+
+// Inactivity threshold in days — after this, an account with no new post is marked inactive.
+var ACCOUNT_INACTIVITY_DAYS = parseInt(process.env.ACCOUNT_INACTIVITY_DAYS || '7', 10);
+
+// Upsert an account. Touches last_seen_at and updates va mapping if changed.
+async function upsertAccount(username, platform, vaDiscordId, vaName) {
+  if (!username || !platform) return null;
+  username = String(username).toLowerCase().trim();
+  if (!username) return null;
+  var sql = "INSERT INTO accounts (username, platform, va_discord_id, va_name, status, last_seen_at) " +
+    "VALUES ($1, $2, $3, $4, 'active', NOW()) " +
+    "ON CONFLICT (username, platform) DO UPDATE SET " +
+    "  last_seen_at = NOW(), " +
+    "  status = 'active', " +
+    "  va_discord_id = COALESCE(EXCLUDED.va_discord_id, accounts.va_discord_id), " +
+    "  va_name = COALESCE(EXCLUDED.va_name, accounts.va_name) " +
+    "RETURNING *";
+  var result = await pool.query(sql, [username, platform, vaDiscordId || null, vaName || null]);
+  return result.rows[0];
+}
+
+async function getAccount(id) {
+  var result = await pool.query('SELECT * FROM accounts WHERE id = $1', [id]);
+  return result.rows[0] || null;
+}
+
+async function getAccountByUsername(username, platform) {
+  if (!username || !platform) return null;
+  var result = await pool.query('SELECT * FROM accounts WHERE username = $1 AND platform = $2', [String(username).toLowerCase(), platform]);
+  return result.rows[0] || null;
+}
+
+// List accounts with aggregated stats (posts count, total views, last post date).
+// Optionally filter by platform, VA, or status.
+async function listAccountsWithStats(opts) {
+  opts = opts || {};
+  var conditions = [];
+  var params = [];
+  if (opts.platform) { params.push(opts.platform); conditions.push('a.platform = $' + params.length); }
+  if (opts.vaDiscordId) { params.push(opts.vaDiscordId); conditions.push('a.va_discord_id = $' + params.length); }
+  if (opts.status) { params.push(opts.status); conditions.push('a.status = $' + params.length); }
+  var where = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
+
+  // Aggregate snapshots via LATERAL to avoid row-multiplication on joins.
+  var sql =
+    "SELECT a.id, a.username, a.platform, a.va_discord_id, a.va_name, a.status, " +
+    "       a.first_seen_at, a.last_seen_at, a.created_at, " +
+    "       COALESCE(stats.total_posts, 0) AS total_posts, " +
+    "       COALESCE(stats.posts_7d, 0) AS posts_7d, " +
+    "       COALESCE(stats.total_views, 0) AS total_views, " +
+    "       COALESCE(stats.total_likes, 0) AS total_likes, " +
+    "       COALESCE(stats.total_comments, 0) AS total_comments, " +
+    "       COALESCE(stats.total_shares, 0) AS total_shares, " +
+    "       stats.last_post_at " +
+    "FROM accounts a " +
+    "LEFT JOIN LATERAL ( " +
+    "  SELECT COUNT(DISTINCT p.id) AS total_posts, " +
+    "         COUNT(DISTINCT p.id) FILTER (WHERE p.created_at >= NOW() - INTERVAL '7 days') AS posts_7d, " +
+    "         COALESCE(SUM(latest.views), 0) AS total_views, " +
+    "         COALESCE(SUM(latest.likes), 0) AS total_likes, " +
+    "         COALESCE(SUM(latest.comments), 0) AS total_comments, " +
+    "         COALESCE(SUM(latest.shares), 0) AS total_shares, " +
+    "         MAX(p.created_at) AS last_post_at " +
+    "  FROM posts p " +
+    "  LEFT JOIN LATERAL ( " +
+    "    SELECT views, likes, comments, shares FROM snapshots s " +
+    "    WHERE s.post_id = p.id AND COALESCE(s.error, '') <> 'coaching_sent' " +
+    "    ORDER BY s.scraped_at DESC LIMIT 1 " +
+    "  ) latest ON true " +
+    "  WHERE p.account_id = a.id " +
+    ") stats ON true " +
+    where + " " +
+    "ORDER BY COALESCE(stats.last_post_at, a.last_seen_at) DESC NULLS LAST";
+
+  var result = await pool.query(sql, params);
+  return result.rows;
+}
+
+// Detailed view: account + recent posts with latest stats.
+async function getAccountDetails(accountId, daysLimit) {
+  daysLimit = daysLimit || 30;
+  var account = await getAccount(accountId);
+  if (!account) return null;
+  var postsSql =
+    "SELECT p.id, p.ig_post_id, p.url, p.va_name, p.va_discord_id, p.created_at, " +
+    "       p.caption, p.performance, p.platform, p.status, " +
+    "       s.views, s.likes, s.comments, s.shares, s.retweets, s.quote_tweets, s.bookmarks " +
+    "FROM posts p " +
+    "LEFT JOIN LATERAL ( " +
+    "  SELECT views, likes, comments, shares, retweets, quote_tweets, bookmarks FROM snapshots sn " +
+    "  WHERE sn.post_id = p.id AND COALESCE(sn.error, '') <> 'coaching_sent' " +
+    "  ORDER BY sn.scraped_at DESC LIMIT 1 " +
+    ") s ON true " +
+    "WHERE p.account_id = $1 AND p.created_at >= NOW() - ($2 || ' days')::interval " +
+    "ORDER BY p.created_at DESC";
+  var posts = await pool.query(postsSql, [accountId, daysLimit]);
+  return { account: account, posts: posts.rows };
+}
+
+// Manually mark an account active/inactive (e.g. admin override from the dashboard).
+async function setAccountStatus(accountId, status) {
+  if (status !== 'active' && status !== 'inactive') throw new Error('Invalid status');
+  var result = await pool.query('UPDATE accounts SET status = $1 WHERE id = $2 RETURNING *', [status, accountId]);
+  return result.rows[0] || null;
+}
+
+// Auto-sweep: accounts with no post in N days are marked inactive.
+// Run from a daily cron. Returns how many accounts flipped status.
+async function markInactiveAccounts(days) {
+  var n = days || ACCOUNT_INACTIVITY_DAYS;
+  var sql =
+    "UPDATE accounts a SET status = 'inactive' " +
+    "WHERE a.status = 'active' " +
+    "  AND NOT EXISTS ( " +
+    "    SELECT 1 FROM posts p " +
+    "    WHERE p.account_id = a.id AND p.created_at >= NOW() - ($1 || ' days')::interval " +
+    "  ) " +
+    "  AND a.last_seen_at < NOW() - ($1 || ' days')::interval " +
+    "RETURNING id, username, platform";
+  var result = await pool.query(sql, [n]);
+  if (result.rowCount > 0) {
+    logger.info('Marked ' + result.rowCount + ' accounts inactive (>= ' + n + 'd of silence)');
+  }
+  return result.rows;
+}
+
+// Distinct usernames used by a given VA (handy for autocomplete / cards).
+async function getAccountsForVa(vaDiscordId, platform) {
+  var sql = platform
+    ? "SELECT * FROM accounts WHERE va_discord_id = $1 AND platform = $2 ORDER BY last_seen_at DESC"
+    : "SELECT * FROM accounts WHERE va_discord_id = $1 ORDER BY last_seen_at DESC";
+  var params = platform ? [vaDiscordId, platform] : [vaDiscordId];
+  var result = await pool.query(sql, params);
+  return result.rows;
+}
+
+
 
 async function getDashboardUser(username) {
   var result = await pool.query('SELECT * FROM dashboard_users WHERE username = $1', [username]);
@@ -448,7 +592,7 @@ module.exports = {
   setUserPermission, removeUserPermission, getUserPermissions,
   getUserPlatforms, getUserRole, canAccessPlatform, getAllPermissions,
   // Posts
-  insertPost, getPost, getPostByIgId, getActivePosts,
+  insertPost, updatePostAccount, getPost, getPostByIgId, getActivePosts,
   endTracking, setPostError, setManagerMsgId,
   // Snapshots
   insertSnapshot, getLatestSnapshot, getSnapshotHistory, getSnapshotAtHour, getPostMilestones,
@@ -463,6 +607,10 @@ module.exports = {
   updateStreak, getAllStreaks,
   // Alerts
   getInactiveVAs, getPerformanceDrops,
+  // Accounts
+  upsertAccount, getAccount, getAccountByUsername, listAccountsWithStats,
+  getAccountDetails, setAccountStatus, markInactiveAccounts, getAccountsForVa,
+  ACCOUNT_INACTIVITY_DAYS,
   // Dashboard
   getDashboardUser, upsertDashboardUser,
   // Constants
