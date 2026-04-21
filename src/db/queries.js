@@ -31,7 +31,7 @@ async function getUserPlatforms(discordId) {
   var perms = await getUserPermissions(discordId);
   // If user has 'all' platform, return both
   var hasAll = perms.some(function(p) { return p.platform === 'all'; });
-  if (hasAll) return ['instagram', 'twitter'];
+  if (hasAll) return ['instagram', 'twitter', 'geelark'];
   return perms.map(function(p) { return p.platform; });
 }
 
