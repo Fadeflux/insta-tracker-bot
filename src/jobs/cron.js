@@ -58,6 +58,16 @@ function initCronJobs(client) {
     try { await runForEachPlatform(sendPerformanceDropAlert); } catch (err) { console.error('Perf drop alert failed', err.message); }
   }, { timezone: config.timezone });
 
+  // Daily sweep of inactive accounts — 01:05 Europe/Paris, low traffic window
+  cron.schedule('5 1 * * *', async function() {
+    try {
+      var flipped = await db.markInactiveAccounts();
+      if (flipped && flipped.length > 0) {
+        console.log('[Accounts] ' + flipped.length + ' account(s) flagged inactive');
+      }
+    } catch (err) { console.error('Account inactivity sweep failed', err.message); }
+  }, { timezone: config.timezone });
+
   console.log('Cron jobs initialized (multi-platform)');
 }
 
