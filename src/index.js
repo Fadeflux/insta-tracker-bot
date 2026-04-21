@@ -3,6 +3,7 @@ console.log('Config loaded OK');
 console.log('Token exists:', !!config.discord.token);
 console.log('DB URL exists:', !!config.db.url);
 console.log('Redis URL exists:', !!config.redis.url);
+console.log('Active platforms:', config.getActivePlatforms().join(', '));
 
 var { Client, GatewayIntentBits, Partials } = require('discord.js');
 console.log('Discord.js loaded OK');
@@ -27,6 +28,7 @@ var client = new Client({
 
 client.once('ready', async function() {
   console.log('Bot connected as ' + client.user.tag);
+  console.log('Guilds: ' + client.guilds.cache.map(function(g) { return g.name + ' (' + g.id + ')'; }).join(', '));
   setDiscordClient(client);
   createNotifyWorker();
   initCronJobs(client);
