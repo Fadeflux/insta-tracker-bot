@@ -7,42 +7,44 @@ var db = require('../db/queries');
 // Example: admin:admin123:admin:all,manager1:pass1:manager:instagram
 var DASHBOARD_USERS = {};
 
+// Users defined in ENV — these can NEVER be overwritten by DB
+var ENV_USERNAMES = new Set();
+
 function loadUsers() {
-  // Load from env var (these always take priority)
-  var envUsers = {};
   var raw = process.env.DASHBOARD_USERS || 'admin:admin123:admin:all';
   var pairs = raw.split(',');
   pairs.forEach(function(pair) {
     var parts = pair.trim().split(':');
     if (parts.length >= 2) {
       var username = parts[0];
-      envUsers[username] = true;
+      ENV_USERNAMES.add(username);
       DASHBOARD_USERS[username] = {
         password: parts[1],
         role: parts[2] || 'va',
         platform: parts[3] || 'all',
       };
+      console.log('[Users] ENV user loaded: ' + username + ' role=' + (parts[2]||'va') + ' platform=' + (parts[3]||'all'));
     }
   });
 
-  // Then load from DB (only users NOT already defined in ENV)
+  // Load DB users (skip any that exist in ENV)
   db.pool.query('SELECT * FROM dashboard_users').then(function(result) {
-    // Delete DB entries that conflict with ENV users
     result.rows.forEach(function(row) {
-      if (envUsers[row.username]) {
+      if (ENV_USERNAMES.has(row.username)) {
+        console.log('[Users] Skipping DB user (ENV has priority): ' + row.username);
         db.pool.query('DELETE FROM dashboard_users WHERE username = $1', [row.username]).catch(function(){});
-        console.log('[Users] Removed DB duplicate for ENV user: ' + row.username);
       } else {
         DASHBOARD_USERS[row.username] = {
           password: row.password_hash,
           role: row.role,
           platform: row.platform,
         };
+        console.log('[Users] DB user loaded: ' + row.username + ' role=' + row.role);
       }
     });
-    console.log('Dashboard users loaded: ' + Object.keys(DASHBOARD_USERS).length + ' (env=' + Object.keys(envUsers).length + ' + DB=' + (Object.keys(DASHBOARD_USERS).length - Object.keys(envUsers).length) + ')');
+    console.log('[Users] Total: ' + Object.keys(DASHBOARD_USERS).length);
   }).catch(function(e) {
-    console.log('Dashboard users loaded: ' + Object.keys(DASHBOARD_USERS).length + ' (env only, DB error: ' + e.message + ')');
+    console.log('[Users] DB error: ' + e.message + ' — using ENV only');
   });
 }
 
