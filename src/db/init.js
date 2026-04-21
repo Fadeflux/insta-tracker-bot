@@ -190,13 +190,73 @@ END $$;
 
 CREATE INDEX IF NOT EXISTS idx_posts_account ON posts(account_id);
 CREATE INDEX IF NOT EXISTS idx_posts_account_username ON posts(account_username);
+
+-- === V4: GAMIFICATION TABLES ===
+
+-- Points earned per day per VA (10 for #1, 6 for #2, 3 for #3).
+-- Aggregated weekly to declare a winner.
+CREATE TABLE IF NOT EXISTS va_points (
+  id             SERIAL PRIMARY KEY,
+  va_discord_id  VARCHAR(32) NOT NULL,
+  va_name        VARCHAR(128) NOT NULL,
+  platform       VARCHAR(16) NOT NULL DEFAULT 'instagram',
+  date           DATE NOT NULL,
+  rank           INTEGER NOT NULL,
+  points         INTEGER NOT NULL,
+  total_views    BIGINT DEFAULT 0,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (va_discord_id, date, platform)
+);
+
+CREATE INDEX IF NOT EXISTS idx_points_date ON va_points(date);
+CREATE INDEX IF NOT EXISTS idx_points_va ON va_points(va_discord_id);
+CREATE INDEX IF NOT EXISTS idx_points_platform ON va_points(platform);
+
+-- Weekly winners archive. One row per (week, platform).
+CREATE TABLE IF NOT EXISTS weekly_winners (
+  id              SERIAL PRIMARY KEY,
+  week_start      DATE NOT NULL,
+  week_end        DATE NOT NULL,
+  platform        VARCHAR(16) NOT NULL,
+  va_discord_id   VARCHAR(32) NOT NULL,
+  va_name         VARCHAR(128) NOT NULL,
+  total_points    INTEGER NOT NULL,
+  total_views     BIGINT DEFAULT 0,
+  total_posts     INTEGER DEFAULT 0,
+  announced_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (week_start, platform)
+);
+
+CREATE INDEX IF NOT EXISTS idx_winners_platform ON weekly_winners(platform);
+
+-- Weekly 1v1 duels. Paired randomly every Monday, resolved on Sunday.
+CREATE TABLE IF NOT EXISTS duels (
+  id             SERIAL PRIMARY KEY,
+  week_start     DATE NOT NULL,
+  week_end       DATE NOT NULL,
+  platform       VARCHAR(16) NOT NULL,
+  va1_discord_id VARCHAR(32) NOT NULL,
+  va1_name       VARCHAR(128) NOT NULL,
+  va2_discord_id VARCHAR(32) NOT NULL,
+  va2_name       VARCHAR(128) NOT NULL,
+  va1_views      BIGINT DEFAULT 0,
+  va2_views      BIGINT DEFAULT 0,
+  winner_id      VARCHAR(32),
+  status         VARCHAR(16) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'resolved')),
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  resolved_at    TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_duels_status ON duels(status);
+CREATE INDEX IF NOT EXISTS idx_duels_platform ON duels(platform);
+CREATE INDEX IF NOT EXISTS idx_duels_week ON duels(week_start);
 `;
 
 async function initDb() {
   try {
     await pool.query(SCHEMA);
     await pool.query(MIGRATIONS);
-    logger.info('Database schema initialized (v3 per-account tracking)');
+    logger.info('Database schema initialized (v4 gamification + per-account tracking)');
   } catch (err) {
     logger.error('Database init failed', { error: err.message });
     throw err;
