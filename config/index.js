@@ -10,6 +10,8 @@ module.exports = {
       managers: process.env.CHANNEL_MANAGERS,
       results: process.env.CHANNEL_RESULTS,
       alerts: process.env.CHANNEL_ALERTS,
+      coaching: process.env.CHANNEL_COACHING,
+      results6h: process.env.CHANNEL_RESULTS_6H,
     },
     managerRoleId: process.env.MANAGER_ROLE_ID,
     vaRoleId: process.env.VA_ROLE_ID,
