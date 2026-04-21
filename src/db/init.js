@@ -158,13 +158,45 @@ DO $$ BEGIN
       UNIQUE (va_discord_id, date, platform);
   END IF;
 END $$;
+
+-- === V3: ACCOUNTS TABLE (tracking per IG/Twitter account) ===
+CREATE TABLE IF NOT EXISTS accounts (
+  id            SERIAL PRIMARY KEY,
+  username      VARCHAR(128) NOT NULL,
+  platform      VARCHAR(16) NOT NULL CHECK (platform IN ('instagram', 'twitter', 'geelark')),
+  va_discord_id VARCHAR(32),
+  va_name       VARCHAR(128),
+  status        VARCHAR(16) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
+  first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_seen_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (username, platform)
+);
+
+CREATE INDEX IF NOT EXISTS idx_accounts_platform ON accounts(platform);
+CREATE INDEX IF NOT EXISTS idx_accounts_va ON accounts(va_discord_id);
+CREATE INDEX IF NOT EXISTS idx_accounts_status ON accounts(status);
+CREATE INDEX IF NOT EXISTS idx_accounts_last_seen ON accounts(last_seen_at);
+
+-- === V3: Add account_id to posts ===
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='posts' AND column_name='account_id') THEN
+    ALTER TABLE posts ADD COLUMN account_id INTEGER REFERENCES accounts(id) ON DELETE SET NULL;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='posts' AND column_name='account_username') THEN
+    ALTER TABLE posts ADD COLUMN account_username VARCHAR(128);
+  END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_posts_account ON posts(account_id);
+CREATE INDEX IF NOT EXISTS idx_posts_account_username ON posts(account_username);
 `;
 
 async function initDb() {
   try {
     await pool.query(SCHEMA);
     await pool.query(MIGRATIONS);
-    logger.info('Database schema initialized (v2 multi-platform)');
+    logger.info('Database schema initialized (v3 per-account tracking)');
   } catch (err) {
     logger.error('Database init failed', { error: err.message });
     throw err;
