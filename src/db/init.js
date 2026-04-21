@@ -52,6 +52,7 @@ CREATE INDEX IF NOT EXISTS idx_daily_date ON daily_summaries(date);
 
 const MIGRATIONS = `
 DO $$ BEGIN
+  -- === EXISTING MIGRATIONS (from v1) ===
   IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='posts' AND column_name='caption') THEN
     ALTER TABLE posts ADD COLUMN caption TEXT;
   END IF;
@@ -64,8 +65,37 @@ DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='posts' AND column_name='platform') THEN
     ALTER TABLE posts ADD COLUMN platform VARCHAR(16) DEFAULT 'instagram';
   END IF;
+
+  -- === V2 MIGRATIONS: Multi-platform support ===
+
+  -- Add platform to daily_summaries
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='daily_summaries' AND column_name='platform') THEN
+    ALTER TABLE daily_summaries ADD COLUMN platform VARCHAR(16) DEFAULT 'instagram';
+  END IF;
+
+  -- Add retweets column for Twitter (maps to shares for IG)
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='snapshots' AND column_name='retweets') THEN
+    ALTER TABLE snapshots ADD COLUMN retweets INTEGER DEFAULT 0;
+  END IF;
+
+  -- Add quote_tweets column for Twitter
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='snapshots' AND column_name='quote_tweets') THEN
+    ALTER TABLE snapshots ADD COLUMN quote_tweets INTEGER DEFAULT 0;
+  END IF;
+
+  -- Add bookmarks column (Twitter bookmarks)
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='snapshots' AND column_name='bookmarks') THEN
+    ALTER TABLE snapshots ADD COLUMN bookmarks INTEGER DEFAULT 0;
+  END IF;
+
+  -- Add guild_id to posts (to know which Discord server the post came from)
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='posts' AND column_name='guild_id') THEN
+    ALTER TABLE posts ADD COLUMN guild_id VARCHAR(32);
+  END IF;
+
 END $$;
 
+-- === STREAKS TABLE (from v1) ===
 CREATE TABLE IF NOT EXISTS va_streaks (
   va_discord_id VARCHAR(32) PRIMARY KEY,
   va_name       VARCHAR(128) NOT NULL,
@@ -75,15 +105,66 @@ CREATE TABLE IF NOT EXISTS va_streaks (
   updated_at     TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- === V2: Add platform to va_streaks ===
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='va_streaks' AND column_name='platform') THEN
+    ALTER TABLE va_streaks ADD COLUMN platform VARCHAR(16) DEFAULT 'instagram';
+    -- Drop old PK and recreate as composite
+    ALTER TABLE va_streaks DROP CONSTRAINT IF EXISTS va_streaks_pkey;
+    ALTER TABLE va_streaks ADD PRIMARY KEY (va_discord_id, platform);
+  END IF;
+END $$;
+
+-- === V2: USER PERMISSIONS TABLE ===
+CREATE TABLE IF NOT EXISTS user_permissions (
+  id            SERIAL PRIMARY KEY,
+  discord_id    VARCHAR(32) NOT NULL,
+  platform      VARCHAR(16) NOT NULL CHECK (platform IN ('instagram', 'twitter', 'all')),
+  role          VARCHAR(16) NOT NULL DEFAULT 'va' CHECK (role IN ('admin', 'manager', 'va')),
+  granted_by    VARCHAR(32),
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (discord_id, platform)
+);
+
+-- === V2: DASHBOARD SESSIONS TABLE (for platform-aware web auth) ===
+CREATE TABLE IF NOT EXISTS dashboard_users (
+  id            SERIAL PRIMARY KEY,
+  username      VARCHAR(64) UNIQUE NOT NULL,
+  password_hash VARCHAR(255) NOT NULL,
+  role          VARCHAR(16) NOT NULL DEFAULT 'va' CHECK (role IN ('admin', 'manager', 'va')),
+  platform      VARCHAR(16) NOT NULL DEFAULT 'all' CHECK (platform IN ('instagram', 'twitter', 'all')),
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- === INDEXES for v2 ===
 CREATE INDEX IF NOT EXISTS idx_posts_perf ON posts(performance);
 CREATE INDEX IF NOT EXISTS idx_posts_platform ON posts(platform);
+CREATE INDEX IF NOT EXISTS idx_posts_guild ON posts(guild_id);
+CREATE INDEX IF NOT EXISTS idx_daily_platform ON daily_summaries(platform);
+CREATE INDEX IF NOT EXISTS idx_perms_discord ON user_permissions(discord_id);
+CREATE INDEX IF NOT EXISTS idx_perms_platform ON user_permissions(platform);
+CREATE INDEX IF NOT EXISTS idx_streaks_platform ON va_streaks(platform);
+
+-- === UPDATE daily_summaries UNIQUE constraint to include platform ===
+DO $$ BEGIN
+  -- Check if old unique constraint exists without platform
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint 
+    WHERE conname = 'daily_summaries_va_discord_id_date_key'
+    AND conrelid = 'daily_summaries'::regclass
+  ) THEN
+    ALTER TABLE daily_summaries DROP CONSTRAINT daily_summaries_va_discord_id_date_key;
+    ALTER TABLE daily_summaries ADD CONSTRAINT daily_summaries_va_discord_id_date_platform_key 
+      UNIQUE (va_discord_id, date, platform);
+  END IF;
+END $$;
 `;
 
 async function initDb() {
   try {
     await pool.query(SCHEMA);
     await pool.query(MIGRATIONS);
-    logger.info('Database schema initialized');
+    logger.info('Database schema initialized (v2 multi-platform)');
   } catch (err) {
     logger.error('Database init failed', { error: err.message });
     throw err;
@@ -92,7 +173,7 @@ async function initDb() {
 
 if (require.main === module) {
   initDb()
-    .then(function() { console.log('Database initialized'); process.exit(0); })
+    .then(function() { console.log('Database initialized (v2)'); process.exit(0); })
     .catch(function(err) { console.error('Init failed:', err.message); process.exit(1); });
 }
 
