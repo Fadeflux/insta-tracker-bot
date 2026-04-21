@@ -68,10 +68,10 @@ function checkAuth(req, res, next) {
 function checkPlatformAccess(req, res, next) {
   var requestedPlatform = req.query.platform || req.params.platform;
   if (!requestedPlatform || req.userPlatform === 'all') return next();
-  if (req.userPlatform !== requestedPlatform) {
-    return res.status(403).json({ error: 'Access denied for platform: ' + requestedPlatform });
-  }
-  return next();
+  // Handle comma-separated platforms
+  var userPlats = req.userPlatform.split(',');
+  if (userPlats.indexOf(requestedPlatform) !== -1) return next();
+  return res.status(403).json({ error: 'Access denied for platform: ' + requestedPlatform });
 }
 
 function calcScore(s) {
@@ -124,6 +124,8 @@ function createWebServer() {
       var allowedPlatforms = [];
       if (user.platform === 'all') {
         allowedPlatforms = config.getActivePlatforms();
+      } else if (user.platform.indexOf(',') !== -1) {
+        allowedPlatforms = user.platform.split(',');
       } else {
         allowedPlatforms = [user.platform];
       }
@@ -145,6 +147,8 @@ function createWebServer() {
     var allowedPlatforms = [];
     if (user.platform === 'all') {
       allowedPlatforms = config.getActivePlatforms();
+    } else if (user.platform.indexOf(',') !== -1) {
+      allowedPlatforms = user.platform.split(',');
     } else {
       allowedPlatforms = [user.platform];
     }
@@ -396,7 +400,13 @@ function createWebServer() {
     if (!username || username.length < 2) return res.status(400).json({ error: 'Username trop court (min 2 caracteres)' });
     if (!password || password.length < 4) return res.status(400).json({ error: 'Mot de passe trop court (min 4 caracteres)' });
     if (['admin', 'manager', 'va'].indexOf(role) === -1) return res.status(400).json({ error: 'Role invalide (admin, manager, va)' });
-    if (['all', 'instagram', 'twitter', 'geelark'].indexOf(platform) === -1) return res.status(400).json({ error: 'Plateforme invalide' });
+    if (['all', 'instagram', 'twitter', 'geelark'].indexOf(platform) === -1) {
+      // Check if comma-separated combo like "instagram,geelark"
+      var platParts = platform.split(',');
+      var validPlats = ['instagram', 'twitter', 'geelark'];
+      var allValid = platParts.every(function(p) { return validPlats.indexOf(p) !== -1; });
+      if (!allValid) return res.status(400).json({ error: 'Plateforme invalide' });
+    }
 
     var isNew = !DASHBOARD_USERS[username];
     DASHBOARD_USERS[username] = { password: password, role: role, platform: platform };
