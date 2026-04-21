@@ -8,6 +8,7 @@ var db = require('../db/queries');
 var DASHBOARD_USERS = {};
 
 function loadUsers() {
+  // Load from env var first (backward compat)
   var raw = process.env.DASHBOARD_USERS || 'admin:admin123:admin:all';
   var pairs = raw.split(',');
   pairs.forEach(function(pair) {
@@ -20,7 +21,20 @@ function loadUsers() {
       };
     }
   });
-  console.log('Dashboard users loaded: ' + Object.keys(DASHBOARD_USERS).length);
+
+  // Then load from DB (overrides env users if they exist in DB)
+  db.pool.query('SELECT * FROM dashboard_users').then(function(result) {
+    result.rows.forEach(function(row) {
+      DASHBOARD_USERS[row.username] = {
+        password: row.password_hash,
+        role: row.role,
+        platform: row.platform,
+      };
+    });
+    console.log('Dashboard users loaded: ' + Object.keys(DASHBOARD_USERS).length + ' (env + DB)');
+  }).catch(function(e) {
+    console.log('Dashboard users loaded: ' + Object.keys(DASHBOARD_USERS).length + ' (env only, DB error: ' + e.message + ')');
+  });
 }
 
 function checkAuth(req, res, next) {
@@ -342,6 +356,81 @@ function createWebServer() {
       var result = Object.values(hourMap).sort(function(a, b) { return a.hour - b.hour; });
       res.json({ days: days, platform: platform || 'all', hours: result });
     } catch(err) { res.status(500).json({ error: err.message }); }
+  });
+
+  // ==================== ADMIN: USER MANAGEMENT ====================
+
+  function checkAdmin(req, res, next) {
+    if (req.userRole !== 'admin') return res.status(403).json({ error: 'Admin only' });
+    return next();
+  }
+
+  // List all dashboard users
+  app.get('/api/admin/users', checkAuth, checkAdmin, function(req, res) {
+    var users = Object.keys(DASHBOARD_USERS).map(function(u) {
+      return { username: u, role: DASHBOARD_USERS[u].role, platform: DASHBOARD_USERS[u].platform };
+    });
+    res.json({ users: users });
+  });
+
+  // Create or update a dashboard user
+  app.post('/api/admin/users', checkAuth, checkAdmin, function(req, res) {
+    var username = (req.body.username || '').trim().toLowerCase();
+    var password = req.body.password || '';
+    var role = req.body.role || 'va';
+    var platform = req.body.platform || 'all';
+
+    if (!username || username.length < 2) return res.status(400).json({ error: 'Username trop court (min 2 caracteres)' });
+    if (!password || password.length < 4) return res.status(400).json({ error: 'Mot de passe trop court (min 4 caracteres)' });
+    if (['admin', 'manager', 'va'].indexOf(role) === -1) return res.status(400).json({ error: 'Role invalide (admin, manager, va)' });
+    if (['all', 'instagram', 'twitter'].indexOf(platform) === -1) return res.status(400).json({ error: 'Plateforme invalide (all, instagram, twitter)' });
+
+    var isNew = !DASHBOARD_USERS[username];
+    DASHBOARD_USERS[username] = { password: password, role: role, platform: platform };
+
+    // Also save to DB for persistence across restarts
+    db.upsertDashboardUser(username, password, role, platform).catch(function(e) {
+      console.error('Failed to save user to DB:', e.message);
+    });
+
+    console.log('[Admin] User ' + (isNew ? 'created' : 'updated') + ': ' + username + ' (' + role + '/' + platform + ')');
+    res.json({ success: true, action: isNew ? 'created' : 'updated', username: username, role: role, platform: platform });
+  });
+
+  // Update user platform/role (without changing password)
+  app.put('/api/admin/users/:username', checkAuth, checkAdmin, function(req, res) {
+    var username = req.params.username;
+    if (!DASHBOARD_USERS[username]) return res.status(404).json({ error: 'Utilisateur non trouve' });
+
+    var role = req.body.role || DASHBOARD_USERS[username].role;
+    var platform = req.body.platform || DASHBOARD_USERS[username].platform;
+    var password = req.body.password || DASHBOARD_USERS[username].password;
+
+    DASHBOARD_USERS[username] = { password: password, role: role, platform: platform };
+
+    db.upsertDashboardUser(username, password, role, platform).catch(function(e) {
+      console.error('Failed to update user in DB:', e.message);
+    });
+
+    console.log('[Admin] User updated: ' + username + ' (' + role + '/' + platform + ')');
+    res.json({ success: true, username: username, role: role, platform: platform });
+  });
+
+  // Delete a dashboard user
+  app.delete('/api/admin/users/:username', checkAuth, checkAdmin, function(req, res) {
+    var username = req.params.username;
+    if (!DASHBOARD_USERS[username]) return res.status(404).json({ error: 'Utilisateur non trouve' });
+    if (username === req.user) return res.status(400).json({ error: 'Tu ne peux pas te supprimer toi-meme' });
+
+    delete DASHBOARD_USERS[username];
+
+    // Also remove from DB
+    db.pool.query('DELETE FROM dashboard_users WHERE username = $1', [username]).catch(function(e) {
+      console.error('Failed to delete user from DB:', e.message);
+    });
+
+    console.log('[Admin] User deleted: ' + username);
+    res.json({ success: true, deleted: username });
   });
 
   app.get('/', function(req, res) {
