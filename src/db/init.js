@@ -119,7 +119,7 @@ END $$;
 CREATE TABLE IF NOT EXISTS user_permissions (
   id            SERIAL PRIMARY KEY,
   discord_id    VARCHAR(32) NOT NULL,
-  platform      VARCHAR(16) NOT NULL CHECK (platform IN ('instagram', 'twitter', 'all')),
+  platform      VARCHAR(16) NOT NULL CHECK (platform IN ('instagram', 'twitter', 'geelark', 'all')),
   role          VARCHAR(16) NOT NULL DEFAULT 'va' CHECK (role IN ('admin', 'manager', 'va')),
   granted_by    VARCHAR(32),
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -132,7 +132,7 @@ CREATE TABLE IF NOT EXISTS dashboard_users (
   username      VARCHAR(64) UNIQUE NOT NULL,
   password_hash VARCHAR(255) NOT NULL,
   role          VARCHAR(16) NOT NULL DEFAULT 'va' CHECK (role IN ('admin', 'manager', 'va')),
-  platform      VARCHAR(16) NOT NULL DEFAULT 'all' CHECK (platform IN ('instagram', 'twitter', 'all')),
+  platform      VARCHAR(16) NOT NULL DEFAULT 'all' CHECK (platform IN ('instagram', 'twitter', 'geelark', 'all')),
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
