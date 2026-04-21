@@ -8,13 +8,16 @@ var db = require('../db/queries');
 var DASHBOARD_USERS = {};
 
 function loadUsers() {
-  // Load from env var first (backward compat)
+  // Load from env var (these always take priority)
+  var envUsers = {};
   var raw = process.env.DASHBOARD_USERS || 'admin:admin123:admin:all';
   var pairs = raw.split(',');
   pairs.forEach(function(pair) {
     var parts = pair.trim().split(':');
     if (parts.length >= 2) {
-      DASHBOARD_USERS[parts[0]] = {
+      var username = parts[0];
+      envUsers[username] = true;
+      DASHBOARD_USERS[username] = {
         password: parts[1],
         role: parts[2] || 'va',
         platform: parts[3] || 'all',
@@ -22,16 +25,18 @@ function loadUsers() {
     }
   });
 
-  // Then load from DB (overrides env users if they exist in DB)
+  // Then load from DB (only users NOT already defined in ENV)
   db.pool.query('SELECT * FROM dashboard_users').then(function(result) {
     result.rows.forEach(function(row) {
-      DASHBOARD_USERS[row.username] = {
-        password: row.password_hash,
-        role: row.role,
-        platform: row.platform,
-      };
+      if (!envUsers[row.username]) {
+        DASHBOARD_USERS[row.username] = {
+          password: row.password_hash,
+          role: row.role,
+          platform: row.platform,
+        };
+      }
     });
-    console.log('Dashboard users loaded: ' + Object.keys(DASHBOARD_USERS).length + ' (env + DB)');
+    console.log('Dashboard users loaded: ' + Object.keys(DASHBOARD_USERS).length + ' (env=' + Object.keys(envUsers).length + ' + DB=' + (Object.keys(DASHBOARD_USERS).length - Object.keys(envUsers).length) + ')');
   }).catch(function(e) {
     console.log('Dashboard users loaded: ' + Object.keys(DASHBOARD_USERS).length + ' (env only, DB error: ' + e.message + ')');
   });
