@@ -435,8 +435,166 @@ async function getSavedBestPosts(limit, platform) {
 }
 
 // =============================================
-// ===== ACCOUNTS (per-handle tracking) =====
+// ===== GAMIFICATION: POINTS, WINNERS, DUELS =====
 // =============================================
+
+// Award daily points based on the leaderboard. Call after computeDailySummary.
+// Returns the list of rows awarded.
+async function awardDailyPoints(date, platform) {
+  if (!date || !platform) throw new Error('date and platform required');
+  var leaderboard = await getLeaderboard(date, platform);
+  // Only award points to VAs who hit the minimum (6 posts) — avoids giving
+  // points to someone who posted once and happened to rank high.
+  var eligible = leaderboard.filter(function(r) { return Number(r.post_count) >= 6; });
+  if (eligible.length === 0) return [];
+
+  var pointsMap = { 0: 10, 1: 6, 2: 3 };
+  var rows = [];
+  for (var i = 0; i < eligible.length && i < 3; i++) {
+    var r = eligible[i];
+    var sql = 'INSERT INTO va_points (va_discord_id, va_name, platform, date, rank, points, total_views) ' +
+      'VALUES ($1, $2, $3, $4, $5, $6, $7) ' +
+      'ON CONFLICT (va_discord_id, date, platform) DO UPDATE SET ' +
+      '  rank = EXCLUDED.rank, points = EXCLUDED.points, total_views = EXCLUDED.total_views ' +
+      'RETURNING *';
+    var result = await pool.query(sql, [r.va_discord_id, r.va_name, platform, date, i + 1, pointsMap[i], Number(r.total_views) || 0]);
+    rows.push(result.rows[0]);
+  }
+  logger.info('Awarded daily points for ' + platform + ' on ' + date + ': ' + rows.length + ' VAs');
+  return rows;
+}
+
+// Weekly standings — sum of points across the week.
+async function getWeeklyStandings(weekStart, weekEnd, platform) {
+  var sql = 'SELECT va_discord_id, va_name, SUM(points)::int AS total_points, ' +
+    'SUM(total_views)::bigint AS total_views, COUNT(*) AS podium_count ' +
+    'FROM va_points ' +
+    'WHERE date >= $1 AND date <= $2 AND platform = $3 ' +
+    'GROUP BY va_discord_id, va_name ' +
+    'ORDER BY total_points DESC, total_views DESC';
+  var result = await pool.query(sql, [weekStart, weekEnd, platform]);
+  return result.rows;
+}
+
+// Mark the weekly winner (top of standings). Returns the winner row or null.
+async function recordWeeklyWinner(weekStart, weekEnd, platform) {
+  var standings = await getWeeklyStandings(weekStart, weekEnd, platform);
+  if (standings.length === 0) return null;
+  var winner = standings[0];
+
+  // Count posts published that week by the winner
+  var postsSql = "SELECT COUNT(*)::int AS cnt FROM posts WHERE va_discord_id = $1 AND platform = $2 " +
+    "AND created_at::date >= $3 AND created_at::date <= $4";
+  var postsResult = await pool.query(postsSql, [winner.va_discord_id, platform, weekStart, weekEnd]);
+  var totalPosts = postsResult.rows[0].cnt || 0;
+
+  var sql = 'INSERT INTO weekly_winners (week_start, week_end, platform, va_discord_id, va_name, total_points, total_views, total_posts) ' +
+    'VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ' +
+    'ON CONFLICT (week_start, platform) DO UPDATE SET ' +
+    '  va_discord_id = EXCLUDED.va_discord_id, va_name = EXCLUDED.va_name, ' +
+    '  total_points = EXCLUDED.total_points, total_views = EXCLUDED.total_views, ' +
+    '  total_posts = EXCLUDED.total_posts, announced_at = NOW() ' +
+    'RETURNING *';
+  var result = await pool.query(sql, [weekStart, weekEnd, platform, winner.va_discord_id, winner.va_name, winner.total_points, winner.total_views, totalPosts]);
+  return result.rows[0];
+}
+
+async function getRecentWinners(platform, limit) {
+  limit = limit || 8;
+  var sql = platform
+    ? 'SELECT * FROM weekly_winners WHERE platform = $1 ORDER BY week_start DESC LIMIT $2'
+    : 'SELECT * FROM weekly_winners ORDER BY week_start DESC LIMIT $1';
+  var params = platform ? [platform, limit] : [limit];
+  var result = await pool.query(sql, params);
+  return result.rows;
+}
+
+// Create duels for a given week. Takes a list of VA {id, name} and shuffles them
+// into pairs. Odd VA sits out this week. Returns the created duels.
+async function createWeeklyDuels(weekStart, weekEnd, platform, vaList) {
+  if (!vaList || vaList.length < 2) return [];
+
+  // Fisher-Yates shuffle
+  var pool2 = vaList.slice();
+  for (var i = pool2.length - 1; i > 0; i--) {
+    var j = Math.floor(Math.random() * (i + 1));
+    var tmp = pool2[i]; pool2[i] = pool2[j]; pool2[j] = tmp;
+  }
+
+  var duels = [];
+  for (var k = 0; k + 1 < pool2.length; k += 2) {
+    var a = pool2[k], b = pool2[k + 1];
+    var sql = 'INSERT INTO duels (week_start, week_end, platform, va1_discord_id, va1_name, va2_discord_id, va2_name) ' +
+      'VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *';
+    var result = await pool.query(sql, [weekStart, weekEnd, platform, a.id, a.name, b.id, b.name]);
+    duels.push(result.rows[0]);
+  }
+  logger.info('Created ' + duels.length + ' duels for ' + platform + ' (week ' + weekStart + ')');
+  return duels;
+}
+
+// Resolve all active duels for a week: compute total views for each duelist,
+// pick a winner, mark the row as resolved. Returns resolved duels.
+async function resolveWeeklyDuels(weekStart, weekEnd, platform) {
+  var fetchSql = "SELECT * FROM duels WHERE week_start = $1 AND platform = $2 AND status = 'active'";
+  var activeDuels = await pool.query(fetchSql, [weekStart, platform]);
+
+  var resolved = [];
+  for (var i = 0; i < activeDuels.rows.length; i++) {
+    var d = activeDuels.rows[i];
+    // Sum views for each duelist for the week
+    var viewsSql = "SELECT va_discord_id, COALESCE(SUM(s.views), 0)::bigint AS views " +
+      "FROM posts p " +
+      "LEFT JOIN LATERAL ( " +
+      "  SELECT views FROM snapshots sn WHERE sn.post_id = p.id AND COALESCE(sn.error, '') <> 'coaching_sent' " +
+      "  ORDER BY sn.scraped_at DESC LIMIT 1 " +
+      ") s ON true " +
+      "WHERE p.platform = $1 AND p.va_discord_id IN ($2, $3) " +
+      "AND p.created_at::date >= $4 AND p.created_at::date <= $5 " +
+      "GROUP BY va_discord_id";
+    var viewsResult = await pool.query(viewsSql, [platform, d.va1_discord_id, d.va2_discord_id, weekStart, weekEnd]);
+    var map = {};
+    viewsResult.rows.forEach(function(r) { map[r.va_discord_id] = Number(r.views) || 0; });
+    var v1 = map[d.va1_discord_id] || 0;
+    var v2 = map[d.va2_discord_id] || 0;
+    var winner = v1 > v2 ? d.va1_discord_id : v2 > v1 ? d.va2_discord_id : null;
+
+    await pool.query("UPDATE duels SET va1_views = $1, va2_views = $2, winner_id = $3, status = 'resolved', resolved_at = NOW() WHERE id = $4",
+      [v1, v2, winner, d.id]);
+    d.va1_views = v1; d.va2_views = v2; d.winner_id = winner; d.status = 'resolved';
+    resolved.push(d);
+  }
+  logger.info('Resolved ' + resolved.length + ' duels for ' + platform + ' (week ' + weekStart + ')');
+  return resolved;
+}
+
+async function getActiveDuels(platform) {
+  var sql = platform
+    ? "SELECT * FROM duels WHERE status = 'active' AND platform = $1 ORDER BY week_start DESC"
+    : "SELECT * FROM duels WHERE status = 'active' ORDER BY week_start DESC";
+  var params = platform ? [platform] : [];
+  var result = await pool.query(sql, params);
+  return result.rows;
+}
+
+// Helper: compute Monday and Sunday (Europe/Paris) for a given date.
+function getWeekBounds(refDate) {
+  var d = refDate ? new Date(refDate) : new Date();
+  // Day of week: 0=Sun, 1=Mon, ..., 6=Sat. Normalize so Monday = 0.
+  var day = d.getDay();
+  var mondayOffset = day === 0 ? -6 : 1 - day;
+  var monday = new Date(d);
+  monday.setDate(d.getDate() + mondayOffset);
+  monday.setHours(0, 0, 0, 0);
+  var sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  return {
+    start: monday.toISOString().split('T')[0],
+    end: sunday.toISOString().split('T')[0],
+  };
+}
+
+
 
 // Inactivity threshold in days — after this, an account with no new post is marked inactive.
 var ACCOUNT_INACTIVITY_DAYS = parseInt(process.env.ACCOUNT_INACTIVITY_DAYS || '7', 10);
@@ -611,6 +769,9 @@ module.exports = {
   upsertAccount, getAccount, getAccountByUsername, listAccountsWithStats,
   getAccountDetails, setAccountStatus, markInactiveAccounts, getAccountsForVa,
   ACCOUNT_INACTIVITY_DAYS,
+  // Gamification
+  awardDailyPoints, getWeeklyStandings, recordWeeklyWinner, getRecentWinners,
+  createWeeklyDuels, resolveWeeklyDuels, getActiveDuels, getWeekBounds,
   // Dashboard
   getDashboardUser, upsertDashboardUser,
   // Constants
