@@ -31,6 +31,8 @@ var commands = [
       return sub.setName('list').setDescription('Voir toutes les permissions');
     }),
   new SlashCommandBuilder().setName('streaks').setDescription('Voir les streaks actuels'),
+  new SlashCommandBuilder().setName('points').setDescription('Voir le classement de points de la semaine'),
+  new SlashCommandBuilder().setName('duel').setDescription('Voir ton duel de la semaine en cours'),
 ];
 
 // Helper: get platform from interaction guild
@@ -63,6 +65,8 @@ async function handleCommand(interaction) {
     if (commandName === 'force-summary') return await handleForceSummary(interaction);
     if (commandName === 'permission') return await handlePermission(interaction);
     if (commandName === 'streaks') return await handleStreaks(interaction);
+    if (commandName === 'points') return await handlePoints(interaction);
+    if (commandName === 'duel') return await handleDuel(interaction);
     await interaction.reply({ content: 'Commande inconnue.', ephemeral: true });
   } catch (err) {
     logger.error('Command error: ' + commandName, { error: err.message });
@@ -180,6 +184,83 @@ async function handleStreaks(interaction) {
 
   await interaction.editReply({
     content: '**🏅 Streaks ' + platform.toUpperCase() + '**\n\n' + lines.join('\n')
+  });
+}
+
+async function handlePoints(interaction) {
+  await interaction.deferReply();
+  var platform = getPlatform(interaction);
+  var bounds = db.getWeekBounds();
+  var standings = await db.getWeeklyStandings(bounds.start, bounds.end, platform);
+
+  if (standings.length === 0) {
+    return interaction.editReply({ content: 'Aucun point attribue cette semaine pour ' + platform + '. Les points sont distribues chaque soir au top 3 des VA ayant fait 6+ posts.' });
+  }
+
+  var medals = ['🥇', '🥈', '🥉'];
+  var lines = standings.slice(0, 10).map(function(s, i) {
+    var prefix = i < 3 ? medals[i] : '  ' + (i + 1) + '.';
+    return prefix + ' **' + s.va_name + '** — **' + s.total_points + ' pts** (' + s.podium_count + ' podiums cette semaine)';
+  });
+
+  var recentWinners = await db.getRecentWinners(platform, 3);
+  var winnersLine = recentWinners.length > 0
+    ? '\n\n**🏆 Derniers champions hebdomadaires :**\n' + recentWinners.map(function(w) {
+        return '• **' + w.va_name + '** — semaine du ' + w.week_start + ' (' + w.total_points + ' pts)';
+      }).join('\n')
+    : '';
+
+  await interaction.editReply({
+    content: '**🎯 Classement points — semaine du ' + bounds.start + ' au ' + bounds.end + '**\n\n' +
+      lines.join('\n') + '\n\n' +
+      '_Baremage quotidien : 10 / 6 / 3 pts pour le top 3 des VA a 6+ posts. Le #1 de dimanche est couronne champion de la semaine._' +
+      winnersLine
+  });
+}
+
+async function handleDuel(interaction) {
+  await interaction.deferReply({ ephemeral: true });
+  var platform = getPlatform(interaction);
+  var userId = interaction.user.id;
+  var activeDuels = await db.getActiveDuels(platform);
+  var myDuel = activeDuels.find(function(d) { return d.va1_discord_id === userId || d.va2_discord_id === userId; });
+
+  if (!myDuel) {
+    return interaction.editReply({ content: 'Tu n\'as pas de duel actif cette semaine sur ' + platform + '. Les duels sont crees automatiquement chaque dimanche soir.' });
+  }
+
+  var isV1 = myDuel.va1_discord_id === userId;
+  var myName = isV1 ? myDuel.va1_name : myDuel.va2_name;
+  var opponentName = isV1 ? myDuel.va2_name : myDuel.va1_name;
+  var opponentId = isV1 ? myDuel.va2_discord_id : myDuel.va1_discord_id;
+
+  // Compute current views for both
+  var bounds = db.getWeekBounds();
+  var sql = "SELECT va_discord_id, COALESCE(SUM(s.views), 0)::bigint AS views " +
+    "FROM posts p " +
+    "LEFT JOIN LATERAL ( " +
+    "  SELECT views FROM snapshots sn WHERE sn.post_id = p.id AND COALESCE(sn.error, '') <> 'coaching_sent' " +
+    "  ORDER BY sn.scraped_at DESC LIMIT 1 " +
+    ") s ON true " +
+    "WHERE p.platform = $1 AND p.va_discord_id IN ($2, $3) " +
+    "AND p.created_at::date >= $4 AND p.created_at::date <= $5 " +
+    "GROUP BY va_discord_id";
+  var res = await db.pool.query(sql, [platform, myDuel.va1_discord_id, myDuel.va2_discord_id, bounds.start, bounds.end]);
+  var map = {};
+  res.rows.forEach(function(r) { map[r.va_discord_id] = Number(r.views) || 0; });
+  var myViews = map[userId] || 0;
+  var oppViews = map[opponentId] || 0;
+  var diff = myViews - oppViews;
+  var status = diff > 0 ? '🟢 **Tu es en tete !**' : diff < 0 ? '🔴 **Tu es en retard...**' : '🟡 **Egalite parfaite.**';
+
+  await interaction.editReply({
+    content: '**⚔️ Ton duel de la semaine — ' + platform.toUpperCase() + '**\n' +
+      'Du ' + myDuel.week_start + ' au ' + myDuel.week_end + '\n\n' +
+      '👤 **' + myName + '** : ' + myViews.toLocaleString('fr-FR') + ' vues\n' +
+      '🆚 **' + opponentName + '** : ' + oppViews.toLocaleString('fr-FR') + ' vues\n\n' +
+      status + '\n' +
+      'Ecart : **' + Math.abs(diff).toLocaleString('fr-FR') + ' vues**\n\n' +
+      '_Le perdant devra poster un message de felicitations au gagnant dimanche soir._'
   });
 }
 
