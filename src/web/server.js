@@ -3,15 +3,21 @@ var path = require('path');
 var config = require('../../config');
 var db = require('../db/queries');
 
+// DASHBOARD_USERS format: username:password:role:platform
+// Example: admin:admin123:admin:all,manager1:pass1:manager:instagram
 var DASHBOARD_USERS = {};
 
 function loadUsers() {
-  var raw = process.env.DASHBOARD_USERS || 'admin:admin123';
+  var raw = process.env.DASHBOARD_USERS || 'admin:admin123:admin:all';
   var pairs = raw.split(',');
   pairs.forEach(function(pair) {
     var parts = pair.trim().split(':');
-    if (parts.length === 2) {
-      DASHBOARD_USERS[parts[0]] = parts[1];
+    if (parts.length >= 2) {
+      DASHBOARD_USERS[parts[0]] = {
+        password: parts[1],
+        role: parts[2] || 'va',
+        platform: parts[3] || 'all',
+      };
     }
   });
   console.log('Dashboard users loaded: ' + Object.keys(DASHBOARD_USERS).length);
@@ -23,12 +29,24 @@ function checkAuth(req, res, next) {
   try {
     var decoded = Buffer.from(token, 'base64').toString();
     var parts = decoded.split(':');
-    if (parts.length === 2 && DASHBOARD_USERS[parts[0]] === parts[1]) {
+    if (parts.length >= 2 && DASHBOARD_USERS[parts[0]] && DASHBOARD_USERS[parts[0]].password === parts[1]) {
       req.user = parts[0];
+      req.userRole = DASHBOARD_USERS[parts[0]].role;
+      req.userPlatform = DASHBOARD_USERS[parts[0]].platform;
       return next();
     }
   } catch(e) {}
   return res.status(401).json({ error: 'Invalid token' });
+}
+
+// Check if user can access requested platform
+function checkPlatformAccess(req, res, next) {
+  var requestedPlatform = req.query.platform || req.params.platform;
+  if (!requestedPlatform || req.userPlatform === 'all') return next();
+  if (req.userPlatform !== requestedPlatform) {
+    return res.status(403).json({ error: 'Access denied for platform: ' + requestedPlatform });
+  }
+  return next();
 }
 
 function calcScore(s) {
@@ -51,7 +69,6 @@ function getPerf(views) {
   return 'flop';
 }
 
-// Advanced score: (engagement_rate × 100) × log(views)
 function calcAdvancedScore(s) {
   var v = Number(s.views) || 0;
   if (v <= 1) return 0;
@@ -59,29 +76,67 @@ function calcAdvancedScore(s) {
   return Math.round((eng * 100) * Math.log10(v) * 100) / 100;
 }
 
+// Get effective platform for queries (user's platform or requested)
+function getEffectivePlatform(req) {
+  var requested = req.query.platform;
+  if (req.userPlatform === 'all') return requested || null; // null = all platforms
+  return req.userPlatform; // forced to user's platform
+}
+
 function createWebServer() {
   loadUsers();
   var app = express();
   app.use(express.json());
 
+  // Login — returns allowed platforms
   app.post('/api/login', function(req, res) {
     var username = req.body.username;
     var password = req.body.password;
-    if (DASHBOARD_USERS[username] && DASHBOARD_USERS[username] === password) {
+    if (DASHBOARD_USERS[username] && DASHBOARD_USERS[username].password === password) {
+      var user = DASHBOARD_USERS[username];
       var token = Buffer.from(username + ':' + password).toString('base64');
-      return res.json({ token: token, username: username });
+      var allowedPlatforms = [];
+      if (user.platform === 'all') {
+        allowedPlatforms = config.getActivePlatforms();
+      } else {
+        allowedPlatforms = [user.platform];
+      }
+      return res.json({
+        token: token,
+        username: username,
+        role: user.role,
+        platform: user.platform,
+        allowedPlatforms: allowedPlatforms,
+      });
     }
     return res.status(401).json({ error: 'Invalid credentials' });
   });
 
+  // User info
+  app.get('/api/me', checkAuth, function(req, res) {
+    var user = DASHBOARD_USERS[req.user];
+    var allowedPlatforms = [];
+    if (user.platform === 'all') {
+      allowedPlatforms = config.getActivePlatforms();
+    } else {
+      allowedPlatforms = [user.platform];
+    }
+    res.json({
+      username: req.user,
+      role: user.role,
+      platform: user.platform,
+      allowedPlatforms: allowedPlatforms,
+    });
+  });
+
   app.get('/api/today', checkAuth, async function(req, res) {
     try {
+      var platform = getEffectivePlatform(req);
       var today = new Date().toISOString().split('T')[0];
-      await db.computeDailySummary(today);
-      var summaries = await db.getDailySummaries(today);
-      var activePosts = await db.getActivePosts();
+      await db.computeDailySummary(today, platform);
+      var summaries = await db.getDailySummaries(today, platform);
+      var activePosts = await db.getActivePosts(platform);
 
-      // Add performance metrics to each summary
       summaries = summaries.map(function(s) {
         var tv = Number(s.total_views), tl = Number(s.total_likes), tc = Number(s.total_comments), ts = Number(s.total_shares), pc = Number(s.post_count);
         s.avg_views = pc > 0 ? Math.round(tv / pc) : 0;
@@ -92,23 +147,25 @@ function createWebServer() {
         return s;
       });
 
-      res.json({ date: today, summaries: summaries, activePosts: activePosts.length });
+      res.json({ date: today, platform: platform || 'all', summaries: summaries, activePosts: activePosts.length });
     } catch(err) { res.status(500).json({ error: err.message }); }
   });
 
   app.get('/api/stats/:date', checkAuth, async function(req, res) {
     try {
+      var platform = getEffectivePlatform(req);
       var date = req.params.date;
-      await db.computeDailySummary(date);
-      var summaries = await db.getDailySummaries(date);
-      res.json({ date: date, summaries: summaries });
+      await db.computeDailySummary(date, platform);
+      var summaries = await db.getDailySummaries(date, platform);
+      res.json({ date: date, platform: platform || 'all', summaries: summaries });
     } catch(err) { res.status(500).json({ error: err.message }); }
   });
 
   app.get('/api/va/:discordId', checkAuth, async function(req, res) {
     try {
+      var platform = getEffectivePlatform(req);
       var date = req.query.date || new Date().toISOString().split('T')[0];
-      var posts = await db.getVaPostsToday(req.params.discordId, date);
+      var posts = await db.getVaPostsToday(req.params.discordId, date, platform);
       var snapshots = [];
       for (var i = 0; i < posts.length; i++) {
         var history = await db.getSnapshotHistory(posts[i].id);
@@ -126,32 +183,34 @@ function createWebServer() {
           performance: perf,
         });
       }
-      var stats = await db.getVaDailyStats(req.params.discordId, date);
-      res.json({ va_id: req.params.discordId, date: date, posts: snapshots, stats: stats });
+      var stats = await db.getVaDailyStats(req.params.discordId, date, platform);
+      res.json({ va_id: req.params.discordId, date: date, platform: platform || 'all', posts: snapshots, stats: stats });
     } catch(err) { res.status(500).json({ error: err.message }); }
   });
 
   app.get('/api/history/:days', checkAuth, async function(req, res) {
     try {
+      var platform = getEffectivePlatform(req);
       var days = parseInt(req.params.days) || 7;
       var results = [];
       for (var i = 0; i < days; i++) {
         var d = new Date();
         d.setDate(d.getDate() - i);
         var date = d.toISOString().split('T')[0];
-        await db.computeDailySummary(date);
-        var summaries = await db.getDailySummaries(date);
+        await db.computeDailySummary(date, platform);
+        var summaries = await db.getDailySummaries(date, platform);
         results.push({ date: date, summaries: summaries });
       }
-      res.json({ days: days, history: results });
+      res.json({ days: days, platform: platform || 'all', history: results });
     } catch(err) { res.status(500).json({ error: err.message }); }
   });
 
   app.get('/api/leaderboard', checkAuth, async function(req, res) {
     try {
+      var platform = getEffectivePlatform(req);
       var date = req.query.date || new Date().toISOString().split('T')[0];
-      await db.computeDailySummary(date);
-      var rankings = await db.getLeaderboard(date);
+      await db.computeDailySummary(date, platform);
+      var rankings = await db.getLeaderboard(date, platform);
 
       rankings = rankings.map(function(r) {
         var tv = Number(r.total_views), tl = Number(r.total_likes), tc = Number(r.total_comments), ts = Number(r.total_shares), pc = Number(r.post_count);
@@ -162,12 +221,13 @@ function createWebServer() {
         return r;
       });
 
-      res.json({ date: date, rankings: rankings });
+      res.json({ date: date, platform: platform || 'all', rankings: rankings });
     } catch(err) { res.status(500).json({ error: err.message }); }
   });
 
   app.get('/api/compare', checkAuth, async function(req, res) {
     try {
+      var platform = getEffectivePlatform(req);
       var va1 = req.query.va1;
       var va2 = req.query.va2;
       var days = parseInt(req.query.days) || 7;
@@ -176,8 +236,8 @@ function createWebServer() {
         var d = new Date();
         d.setDate(d.getDate() - i);
         var date = d.toISOString().split('T')[0];
-        var s1 = await db.getVaDailyStats(va1, date);
-        var s2 = await db.getVaDailyStats(va2, date);
+        var s1 = await db.getVaDailyStats(va1, date, platform);
+        var s2 = await db.getVaDailyStats(va2, date, platform);
         result.va1.push({ date: date, stats: s1 || null });
         result.va2.push({ date: date, stats: s2 || null });
       }
@@ -187,8 +247,9 @@ function createWebServer() {
 
   app.get('/api/top-posts', checkAuth, async function(req, res) {
     try {
+      var platform = getEffectivePlatform(req);
       var date = req.query.date || new Date().toISOString().split('T')[0];
-      var posts = await db.getTopPostsWithPerformance(date);
+      var posts = await db.getTopPostsWithPerformance(date, platform);
 
       posts = posts.map(function(p) {
         p.score = calcScore(p);
@@ -197,11 +258,10 @@ function createWebServer() {
         return p;
       });
 
-      res.json({ date: date, posts: posts });
+      res.json({ date: date, platform: platform || 'all', posts: posts });
     } catch(err) { res.status(500).json({ error: err.message }); }
   });
 
-  // Performance thresholds info
   app.get('/api/thresholds', checkAuth, function(req, res) {
     res.json({
       viral: parseInt(process.env.VIRAL_VIEWS || '5000'),
@@ -210,14 +270,13 @@ function createWebServer() {
     });
   });
 
-  // Recommendations endpoint
   app.get('/api/recommendations', checkAuth, async function(req, res) {
     try {
+      var platform = getEffectivePlatform(req);
       var date = req.query.date || new Date().toISOString().split('T')[0];
-      await db.computeDailySummary(date);
-      var recs = await db.getRecommendations(date);
+      await db.computeDailySummary(date, platform);
+      var recs = await db.getRecommendations(date, platform);
 
-      // Add score and engagement to posts
       recs.postsToRepost = recs.postsToRepost.map(function(p) {
         p.score = calcScore(p);
         p.engagement = calcEngagement(p);
@@ -235,11 +294,11 @@ function createWebServer() {
     } catch(err) { res.status(500).json({ error: err.message }); }
   });
 
-  // Saved best posts (all time)
   app.get('/api/saved-posts', checkAuth, async function(req, res) {
     try {
+      var platform = getEffectivePlatform(req);
       var limit = parseInt(req.query.limit) || 50;
-      var posts = await db.getSavedBestPosts(limit);
+      var posts = await db.getSavedBestPosts(limit, platform);
       posts = posts.map(function(p) {
         p.score = calcScore(p);
         p.engagement = calcEngagement(p);
@@ -247,25 +306,24 @@ function createWebServer() {
         p.perf = getPerf(Number(p.views) || 0);
         return p;
       });
-      res.json({ posts: posts });
+      res.json({ platform: platform || 'all', posts: posts });
     } catch(err) { res.status(500).json({ error: err.message }); }
   });
 
-  // Streaks
   app.get('/api/streaks', checkAuth, async function(req, res) {
     try {
-      var streaks = await db.getAllStreaks();
-      res.json({ streaks: streaks });
+      var platform = getEffectivePlatform(req);
+      var streaks = await db.getAllStreaks(platform);
+      res.json({ platform: platform || 'all', streaks: streaks });
     } catch(err) { res.status(500).json({ error: err.message }); }
   });
 
-  // Heatmap: performance by hour
   app.get('/api/heatmap', checkAuth, async function(req, res) {
     try {
+      var platform = getEffectivePlatform(req);
       var days = parseInt(req.query.days) || 7;
-      var hourly = await db.getHourlyPerformance(days);
+      var hourly = await db.getHourlyPerformance(days, platform);
 
-      // Fill missing hours with zeros
       var hourMap = {};
       for (var h = 0; h < 24; h++) hourMap[h] = { hour: h, post_count: 0, avg_views: 0, avg_likes: 0, avg_comments: 0, avg_engagement: 0, score: 0 };
       hourly.forEach(function(row) {
@@ -282,7 +340,7 @@ function createWebServer() {
       });
 
       var result = Object.values(hourMap).sort(function(a, b) { return a.hour - b.hour; });
-      res.json({ days: days, hours: result });
+      res.json({ days: days, platform: platform || 'all', hours: result });
     } catch(err) { res.status(500).json({ error: err.message }); }
   });
 
