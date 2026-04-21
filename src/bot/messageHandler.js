@@ -1,7 +1,7 @@
 const config = require('../../config');
 const logger = require('../utils/logger');
 const { isInstagramPostUrl, extractInstagramUrls, extractPostId, normalizeUrl } = require('../utils/instagram');
-const { isTwitterUrl, extractTwitterUrls, extractTweetId, normalizeTwitterUrl } = require('../utils/twitter');
+const { isTwitterUrl, extractTwitterUrls, extractTweetId, normalizeTwitterUrl, extractTwitterUsername } = require('../utils/twitter');
 const db = require('../db/queries');
 const { scheduleInitialScrape, notifyQueue } = require('../jobs/scrapeQueue');
 const { scrapePost } = require('../scrapers/instagram');
@@ -69,6 +69,7 @@ async function handleInstagramMessage(message, platConfig, platform) {
       caption: caption,
       platform: platform,
       guildId: message.guild.id,
+      // account_id will be filled asynchronously once the scraper resolves the username
     });
 
     if (!post) { logger.warn('Post insert returned null: ' + igPostId); continue; }
@@ -79,20 +80,42 @@ async function handleInstagramMessage(message, platConfig, platform) {
       setTimeout(function() { reply3.delete().catch(function() {}); }, 10000);
     } catch (e) {}
 
-    // Scrape in background
-    scrapePost(url).then(function(stats) {
-      return db.insertSnapshot(post.id, stats).then(function() {
-        return notifyQueue.add('new-post', { postId: post.id, currentStats: stats, previousStats: null, platform: platform });
+    // Scrape in background — also hydrates the account from the resolved username.
+    (function(postRef, vaId, vaName) {
+      scrapePost(url).then(function(stats) {
+        return db.insertSnapshot(postRef.id, stats).then(function() {
+          return linkAccountIfAny(postRef, stats, platform, vaId, vaName);
+        }).then(function() {
+          return notifyQueue.add('new-post', { postId: postRef.id, currentStats: stats, previousStats: null, platform: platform });
+        });
+      }).catch(function(err) {
+        logger.error('[' + platform.toUpperCase() + '] Initial scrape failed for ' + igPostId, { error: err.message });
+        db.insertSnapshot(postRef.id, { views: 0, likes: 0, comments: 0, shares: 0, error: err.message }).catch(function() {});
       });
-    }).catch(function(err) {
-      logger.error('[' + platform.toUpperCase() + '] Initial scrape failed for ' + igPostId, { error: err.message });
-      db.insertSnapshot(post.id, { views: 0, likes: 0, comments: 0, shares: 0, error: err.message }).catch(function() {});
-    });
+    })(post, message.author.id, (message.member && message.member.displayName) || message.author.username);
 
     await scheduleInitialScrape(post.id, url, platform);
   }
 
   try { await message.delete(); } catch (err) { logger.warn('Could not delete message: ' + err.message); }
+}
+
+// Upsert the account matching a scraper result (if any username was resolved)
+// and attach it to the post. Silent no-op if the scraper didn't find a handle.
+async function linkAccountIfAny(post, stats, platform, vaDiscordId, vaName) {
+  if (!stats || !stats.username) {
+    logger.warn('[' + platform.toUpperCase() + '] Could not resolve account username for post ' + post.id);
+    return;
+  }
+  try {
+    var account = await db.upsertAccount(stats.username, platform, vaDiscordId, vaName);
+    if (account) {
+      await db.updatePostAccount(post.id, account.id, account.username);
+      logger.info('[' + platform.toUpperCase() + '] Post ' + post.id + ' linked to @' + account.username);
+    }
+  } catch (err) {
+    logger.error('[' + platform.toUpperCase() + '] Failed to link account for post ' + post.id, { error: err.message });
+  }
 }
 
 async function handleTwitterMessage(message, platConfig) {
@@ -126,34 +149,55 @@ async function handleTwitterMessage(message, platConfig) {
     }
 
     var caption = extractCaption(message.content, rawUrl);
+    var vaName = (message.member && message.member.displayName) || message.author.username;
+
+    // Twitter: username is in the URL, so we can link the account up-front.
+    var urlUsername = extractTwitterUsername(rawUrl);
+    var accountRow = null;
+    if (urlUsername) {
+      try {
+        accountRow = await db.upsertAccount(urlUsername, 'twitter', message.author.id, vaName);
+      } catch (e) {
+        logger.warn('[TW] upsertAccount failed: ' + e.message);
+      }
+    }
 
     var post = await db.insertPost({
       igPostId: postKey,
       url: url,
       vaDiscordId: message.author.id,
-      vaName: (message.member && message.member.displayName) || message.author.username,
+      vaName: vaName,
       caption: caption,
       platform: 'twitter',
       guildId: message.guild.id,
+      accountId: accountRow ? accountRow.id : null,
+      accountUsername: accountRow ? accountRow.username : urlUsername,
     });
 
     if (!post) { logger.warn('Post insert returned null: ' + postKey); continue; }
-    logger.info('[TW] New tweet registered: ' + tweetId + ' by ' + post.va_name);
+    logger.info('[TW] New tweet registered: ' + tweetId + ' by ' + post.va_name + (urlUsername ? ' on @' + urlUsername : ''));
 
     try {
       var reply3 = await message.channel.send({ content: 'Tweet de <@' + message.author.id + '> enregistre ! Tracking actif jusqu a 23h59.' });
       setTimeout(function() { reply3.delete().catch(function() {}); }, 10000);
     } catch (e) {}
 
-    // Scrape in background
-    scrapeTweet(url).then(function(stats) {
-      return db.insertSnapshot(post.id, stats).then(function() {
-        return notifyQueue.add('new-post', { postId: post.id, currentStats: stats, previousStats: null, platform: 'twitter' });
+    // Scrape in background. If the scraper reports a different username
+    // (e.g. URL had i/web), it takes priority since it comes from FxTwitter.
+    (function(postRef, vaId, vaNm, alreadyLinked) {
+      scrapeTweet(url).then(function(stats) {
+        return db.insertSnapshot(postRef.id, stats).then(function() {
+          if (!alreadyLinked || (stats.username && alreadyLinked && stats.username !== alreadyLinked)) {
+            return linkAccountIfAny(postRef, stats, 'twitter', vaId, vaNm);
+          }
+        }).then(function() {
+          return notifyQueue.add('new-post', { postId: postRef.id, currentStats: stats, previousStats: null, platform: 'twitter' });
+        });
+      }).catch(function(err) {
+        logger.error('[TW] Initial scrape failed for ' + tweetId, { error: err.message });
+        db.insertSnapshot(postRef.id, { views: 0, likes: 0, comments: 0, shares: 0, retweets: 0, quote_tweets: 0, bookmarks: 0, error: err.message }).catch(function() {});
       });
-    }).catch(function(err) {
-      logger.error('[TW] Initial scrape failed for ' + tweetId, { error: err.message });
-      db.insertSnapshot(post.id, { views: 0, likes: 0, comments: 0, shares: 0, retweets: 0, quote_tweets: 0, bookmarks: 0, error: err.message }).catch(function() {});
-    });
+    })(post, message.author.id, vaName, urlUsername);
 
     await scheduleInitialScrape(post.id, url, 'twitter');
   }
