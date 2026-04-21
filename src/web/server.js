@@ -27,8 +27,12 @@ function loadUsers() {
 
   // Then load from DB (only users NOT already defined in ENV)
   db.pool.query('SELECT * FROM dashboard_users').then(function(result) {
+    // Delete DB entries that conflict with ENV users
     result.rows.forEach(function(row) {
-      if (!envUsers[row.username]) {
+      if (envUsers[row.username]) {
+        db.pool.query('DELETE FROM dashboard_users WHERE username = $1', [row.username]).catch(function(){});
+        console.log('[Users] Removed DB duplicate for ENV user: ' + row.username);
+      } else {
         DASHBOARD_USERS[row.username] = {
           password: row.password_hash,
           role: row.role,
@@ -111,6 +115,7 @@ function createWebServer() {
   app.post('/api/login', function(req, res) {
     var username = req.body.username;
     var password = req.body.password;
+    console.log('[Login] Attempt: ' + username + ' | stored role: ' + (DASHBOARD_USERS[username] ? DASHBOARD_USERS[username].role : 'NOT FOUND') + ' | stored platform: ' + (DASHBOARD_USERS[username] ? DASHBOARD_USERS[username].platform : 'N/A'));
     if (DASHBOARD_USERS[username] && DASHBOARD_USERS[username].password === password) {
       var user = DASHBOARD_USERS[username];
       var token = Buffer.from(username + ':' + password).toString('base64');
@@ -120,6 +125,7 @@ function createWebServer() {
       } else {
         allowedPlatforms = [user.platform];
       }
+      console.log('[Login] Success: ' + username + ' role=' + user.role + ' platform=' + user.platform);
       return res.json({
         token: token,
         username: username,
