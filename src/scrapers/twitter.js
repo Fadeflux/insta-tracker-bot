@@ -18,13 +18,16 @@ function getRandomUA() {
 }
 
 async function scrapeTweet(url) {
-  var result = { views: 0, likes: 0, comments: 0, shares: 0, retweets: 0, quote_tweets: 0, bookmarks: 0 };
+  var result = { views: 0, likes: 0, comments: 0, shares: 0, retweets: 0, quote_tweets: 0, bookmarks: 0, username: null };
   var tweetId = extractId(url);
   if (!tweetId) { result.error = 'Invalid Twitter URL'; return result; }
 
   // Extract username from URL for APIs that need it
   var userMatch = url.match(/(?:twitter\.com|x\.com)\/(\w+)\/status\//);
   var username = userMatch ? userMatch[1] : 'i';
+  if (username && username !== 'i' && username.toLowerCase() !== 'web') {
+    result.username = username.toLowerCase();
+  }
 
   try {
     // === STRATEGY 1: FxTwitter API (best — supports NSFW via elongator) ===
@@ -43,6 +46,9 @@ async function scrapeTweet(url) {
           if (tw.views != null) result.views = Number(tw.views);
           if (tw.quote_tweets != null) result.quote_tweets = Number(tw.quote_tweets);
           if (tw.bookmarks != null) result.bookmarks = Number(tw.bookmarks);
+          if (tw.author && tw.author.screen_name) {
+            result.username = String(tw.author.screen_name).toLowerCase();
+          }
           console.log('[Twitter] FxTwitter OK: views=' + result.views + ' likes=' + result.likes + ' replies=' + result.comments + ' rt=' + result.retweets);
         }
       }
