@@ -415,11 +415,15 @@ function createWebServer() {
       if (status && status !== 'all') opts.status = status;
       if (req.query.va) opts.vaDiscordId = req.query.va;
       var accounts = await db.listAccountsWithStats(opts);
-      // Enrich with a small derived field: days since last post.
+      // Enrich with a small derived field: days since last post + health.
       var now = Date.now();
       accounts = accounts.map(function(a) {
         var ref = a.last_post_at || a.last_seen_at;
         a.days_since_last_post = ref ? Math.floor((now - new Date(ref).getTime()) / (1000 * 60 * 60 * 24)) : null;
+        var health = db.computeAccountHealth(a);
+        a.health_status = health.health_status;
+        a.health_score = health.health_score;
+        a.health_reason = health.health_reason;
         return a;
       });
       res.json({ platform: platform || 'all', status: status, count: accounts.length, accounts: accounts });
