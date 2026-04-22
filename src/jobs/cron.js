@@ -85,7 +85,12 @@ function initCronJobs(client) {
     try { await sweepDashboardUsers(); } catch (err) { console.error('Dashboard revocation sweep failed', err.message); }
   }, { timezone: config.timezone });
 
-  console.log('Cron jobs initialized (multi-platform, gamification, auto-revocation)');
+  // Viral post notifications — every 10 min
+  cron.schedule('*/10 * * * *', async function() {
+    try { await runForEachPlatform(notifyViralPosts); } catch (err) { console.error('Viral notification cron failed', err.message); }
+  });
+
+  console.log('Cron jobs initialized (multi-platform, gamification, auto-revocation, viral notifications)');
 }
 
 // Run a function for each active platform
@@ -556,6 +561,75 @@ async function sendVaDM(discordId, content) {
   } catch (e) {
     console.log('[DM] Could not DM ' + discordId + ': ' + e.message);
     return false;
+  }
+}
+
+// =====================================================================
+// ===== VIRAL POST NOTIFICATIONS =====
+// =====================================================================
+//
+// Every 10 min, detect any post that has crossed the VIRAL_VIEWS threshold
+// for the first time. Each viral detection triggers:
+//   1. A DM to the VA congratulating them
+//   2. A public celebration message in #results (group effect — showing
+//      others who did well motivates everyone)
+//
+// Idempotency: the `viral_notifications` table records every (post_id,
+// threshold) pair we've notified about, so no post is ever congratulated
+// twice (even if views fluctuate around the threshold).
+
+var VIRAL_THRESHOLD = parseInt(process.env.VIRAL_VIEWS || '5000', 10);
+
+async function notifyViralPosts(platform) {
+  try {
+    var newViral = await db.getNewPostsReachingThreshold(VIRAL_THRESHOLD, platform);
+    if (newViral.length === 0) return;
+
+    // Use dedicated #viral channel if configured, else fall back to #results
+    var viralChannel = await getChannel(platform, 'viral');
+    var resultsChannel = await getChannel(platform, 'results');
+    var targetChannel = viralChannel || resultsChannel;
+
+    for (var i = 0; i < newViral.length; i++) {
+      var post = newViral[i];
+      var views = Number(post.views) || 0;
+
+      // Record first — prevents double-notification on races (unique constraint)
+      var recorded = await db.recordViralNotification(post.id, post.va_discord_id, VIRAL_THRESHOLD, views);
+      if (!recorded) continue; // Another worker beat us to it
+
+      // 1) DM to the VA — personal, motivating
+      var dmMsg =
+        '🔥🔥🔥 **FELICITATIONS ! Ton post est VIRAL** 🔥🔥🔥\n\n' +
+        'Salut ! Je viens de detecter que ton post vient de passer les **' + fmt(VIRAL_THRESHOLD) + ' vues** sur ' + embeds.getPlatformLabel(platform) + '.\n\n' +
+        '📊 **Stats actuelles :**\n' +
+        '👁️ **' + fmt(views) + ' vues** (et ca continue de monter !)\n' +
+        '❤️ ' + fmt(Number(post.likes) || 0) + ' likes\n' +
+        '💬 ' + fmt(Number(post.comments) || 0) + ' commentaires\n\n' +
+        '🔗 Ton post : ' + post.url + '\n\n' +
+        '💡 **Conseil :** reposte le meme type de contenu dans les 24h pour surfer sur la tendance. Les algos adorent la consistance.\n\n' +
+        'Bravo, continue comme ca ! 💪';
+      await sendVaDM(post.va_discord_id, dmMsg);
+
+      // 2) Public celebration in #viral (or #results as fallback) — the group effect is the real engine
+      if (targetChannel) {
+        var celebMsg =
+          '🔥 **POST VIRAL !** ' + embeds.getPlatformEmoji(platform) + '\n\n' +
+          '<@' + post.va_discord_id + '> vient de franchir les **' + fmt(VIRAL_THRESHOLD) + ' vues** !\n' +
+          (post.account_username ? '📱 Compte : **@' + post.account_username + '**\n' : '') +
+          '👁️ **' + fmt(views) + '** vues · ❤️ ' + fmt(Number(post.likes) || 0) + ' likes · 💬 ' + fmt(Number(post.comments) || 0) + ' com.\n' +
+          '🔗 ' + post.url;
+        try {
+          await targetChannel.send({ content: celebMsg });
+        } catch (e) {
+          console.log('[Viral] Could not post to viral/results channel for ' + platform + ': ' + e.message);
+        }
+      }
+
+      console.log('[' + platform.toUpperCase() + '] Viral notification sent for post ' + post.id + ' (' + fmt(views) + ' views) to ' + post.va_name);
+    }
+  } catch (err) {
+    console.error('notifyViralPosts failed for ' + platform + ':', err.message);
   }
 }
 
