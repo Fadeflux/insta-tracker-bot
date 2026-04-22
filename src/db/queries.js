@@ -273,6 +273,41 @@ async function checkViralPosts(platform) {
   return result.rows;
 }
 
+// Return posts that have crossed a given threshold AND have not yet been
+// notified for that specific threshold. Used by the viral notification cron.
+// Only posts from the last 48h are considered to avoid spamming old posts
+// (an old post could re-trigger if we change the threshold later).
+async function getNewPostsReachingThreshold(threshold, platform) {
+  var whereClause = platform
+    ? "WHERE p.platform = $1 AND p.created_at >= NOW() - INTERVAL '48 hours'"
+    : "WHERE p.created_at >= NOW() - INTERVAL '48 hours'";
+  var params = platform ? [platform] : [];
+  var sql =
+    "SELECT p.id, p.ig_post_id, p.url, p.va_name, p.va_discord_id, p.platform, p.account_username, p.caption, " +
+    "       s.views, s.likes, s.comments, s.shares " +
+    "FROM posts p " +
+    "LEFT JOIN LATERAL (" +
+    "  SELECT views, likes, comments, shares FROM snapshots sn " +
+    "  WHERE sn.post_id = p.id AND COALESCE(sn.error, '') <> 'coaching_sent' " +
+    "  ORDER BY sn.scraped_at DESC LIMIT 1" +
+    ") s ON true " +
+    whereClause + " " +
+    "AND COALESCE(s.views, 0) >= " + parseInt(threshold, 10) + " " +
+    "AND NOT EXISTS (SELECT 1 FROM viral_notifications vn WHERE vn.post_id = p.id AND vn.threshold = " + parseInt(threshold, 10) + ") " +
+    "ORDER BY s.views DESC";
+  var result = await pool.query(sql, params);
+  return result.rows;
+}
+
+// Record that we've notified about a post crossing a threshold.
+// Uses UNIQUE constraint to prevent double-notifications even on race conditions.
+async function recordViralNotification(postId, vaDiscordId, threshold, viewsAtNotif) {
+  var sql = "INSERT INTO viral_notifications (post_id, va_discord_id, threshold, views_at_notif) " +
+    "VALUES ($1, $2, $3, $4) ON CONFLICT (post_id, threshold) DO NOTHING RETURNING *";
+  var result = await pool.query(sql, [postId, vaDiscordId, threshold, viewsAtNotif]);
+  return result.rows[0] || null;
+}
+
 async function getNuggets(date, platform) {
   var whereClause = platform
     ? "WHERE p.created_at::date = $1 AND p.platform = $2 AND COALESCE(s.views, 0) > 0"
@@ -731,6 +766,119 @@ async function getAccountsForVa(vaDiscordId, platform) {
   return result.rows;
 }
 
+// Detect accounts whose recent views (last 3 days) dropped below a fraction
+// of their baseline (days -4 to -10). Excludes accounts with no recent posts
+// — "no post" is an inactivity problem, not a performance drop.
+//
+// Returns only accounts with a meaningful baseline (≥ 3 posts in the baseline
+// window) to avoid false positives on brand-new accounts.
+//
+// threshold = 0.5 means "dropped to less than 50% of usual".
+async function getAccountPerformanceDrops(thresholdRatio, platform) {
+  thresholdRatio = thresholdRatio || 0.5;
+  var platformFilter = platform ? "AND a.platform = '" + platform + "'" : "";
+
+  var sql =
+    "WITH recent AS (" +
+    "  SELECT p.account_id, " +
+    "         AVG(COALESCE(s.views, 0))::numeric AS avg_views, " +
+    "         COUNT(*)::int AS n_posts " +
+    "  FROM posts p " +
+    "  LEFT JOIN LATERAL (" +
+    "    SELECT views FROM snapshots sn " +
+    "    WHERE sn.post_id = p.id AND COALESCE(sn.error, '') <> 'coaching_sent' " +
+    "    ORDER BY sn.scraped_at DESC LIMIT 1" +
+    "  ) s ON true " +
+    "  WHERE p.account_id IS NOT NULL " +
+    "    AND p.created_at >= NOW() - INTERVAL '3 days' " +
+    "  GROUP BY p.account_id " +
+    "  HAVING COUNT(*) >= 1" + // must have at least 1 post in recent window
+    "), " +
+    "baseline AS (" +
+    "  SELECT p.account_id, " +
+    "         AVG(COALESCE(s.views, 0))::numeric AS avg_views, " +
+    "         COUNT(*)::int AS n_posts " +
+    "  FROM posts p " +
+    "  LEFT JOIN LATERAL (" +
+    "    SELECT views FROM snapshots sn " +
+    "    WHERE sn.post_id = p.id AND COALESCE(sn.error, '') <> 'coaching_sent' " +
+    "    ORDER BY sn.scraped_at DESC LIMIT 1" +
+    "  ) s ON true " +
+    "  WHERE p.account_id IS NOT NULL " +
+    "    AND p.created_at >= NOW() - INTERVAL '10 days' " +
+    "    AND p.created_at < NOW() - INTERVAL '3 days' " +
+    "  GROUP BY p.account_id " +
+    "  HAVING COUNT(*) >= 3 AND AVG(COALESCE(s.views, 0)) > 0" + // baseline must be real
+    ") " +
+    "SELECT a.id, a.username, a.platform, a.va_discord_id, a.va_name, " +
+    "       recent.avg_views AS recent_avg, " +
+    "       baseline.avg_views AS baseline_avg, " +
+    "       recent.n_posts AS recent_posts, " +
+    "       baseline.n_posts AS baseline_posts, " +
+    "       CASE WHEN baseline.avg_views > 0 " +
+    "            THEN ROUND((recent.avg_views / baseline.avg_views) * 100) " +
+    "            ELSE 0 END AS pct_of_baseline " +
+    "FROM accounts a " +
+    "JOIN recent ON recent.account_id = a.id " +
+    "JOIN baseline ON baseline.account_id = a.id " +
+    "WHERE a.status = 'active' " + platformFilter + " " +
+    "  AND (recent.avg_views / baseline.avg_views) < $1 " +
+    "ORDER BY (recent.avg_views / baseline.avg_views) ASC";
+
+  var result = await pool.query(sql, [thresholdRatio]);
+  return result.rows;
+}
+
+// Compute a simple health score per account based on:
+//   - posting frequency (posts_7d)
+//   - engagement tendency (recent vs baseline views)
+//   - recency (days since last post)
+// Returns the same rows as listAccountsWithStats but with 3 extra fields:
+//   health_status: 'green' | 'orange' | 'red'
+//   health_score: 0-100
+//   health_reason: short human-readable explanation
+function computeAccountHealth(account) {
+  var posts7d = Number(account.posts_7d) || 0;
+  var daysSince = account.days_since_last_post;
+  var status = 'green';
+  var score = 100;
+  var reasons = [];
+
+  // 1) Inactivity penalty (days since last post)
+  if (daysSince == null) {
+    score = 0;
+    status = 'red';
+    reasons.push('aucun post');
+  } else if (daysSince >= 7) {
+    score -= 60;
+    reasons.push('pas poste depuis ' + daysSince + 'j');
+  } else if (daysSince >= 3) {
+    score -= 25;
+    reasons.push('pas poste depuis ' + daysSince + 'j');
+  }
+
+  // 2) Posting frequency (on 7 days, we expect ≥ 6 posts for healthy)
+  if (posts7d < 3) {
+    score -= 30;
+    reasons.push('freq faible (' + posts7d + '/7j)');
+  } else if (posts7d < 6) {
+    score -= 10;
+    reasons.push('freq moyenne (' + posts7d + '/7j)');
+  }
+
+  // Clamp and classify
+  if (score < 0) score = 0;
+  if (score >= 70) status = 'green';
+  else if (score >= 40) status = 'orange';
+  else status = 'red';
+
+  return {
+    health_status: status,
+    health_score: score,
+    health_reason: reasons.length > 0 ? reasons.join(', ') : 'tout va bien',
+  };
+}
+
 
 
 async function getDashboardUser(username) {
@@ -792,6 +940,7 @@ module.exports = {
   getTopPostsWithPerformance, getVaPerformanceHistory, checkViralPosts,
   updatePostPerformance, getSavedBestPosts, getNuggets, getRecommendations,
   getHourlyPerformance, getPostsForCoaching, markCoachingSent,
+  getNewPostsReachingThreshold, recordViralNotification,
   // Streaks
   updateStreak, getAllStreaks,
   // Alerts
@@ -799,6 +948,7 @@ module.exports = {
   // Accounts
   upsertAccount, getAccount, getAccountByUsername, listAccountsWithStats,
   getAccountDetails, setAccountStatus, markInactiveAccounts, getAccountsForVa,
+  getAccountPerformanceDrops, computeAccountHealth,
   ACCOUNT_INACTIVITY_DAYS,
   // Gamification
   awardDailyPoints, getWeeklyStandings, recordWeeklyWinner, getRecentWinners,
