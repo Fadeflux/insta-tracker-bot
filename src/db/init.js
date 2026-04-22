@@ -250,6 +250,14 @@ CREATE TABLE IF NOT EXISTS duels (
 CREATE INDEX IF NOT EXISTS idx_duels_status ON duels(status);
 CREATE INDEX IF NOT EXISTS idx_duels_platform ON duels(platform);
 CREATE INDEX IF NOT EXISTS idx_duels_week ON duels(week_start);
+
+-- === V5: link dashboard users to Discord IDs (needed for /me page) ===
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='dashboard_users' AND column_name='discord_id') THEN
+    ALTER TABLE dashboard_users ADD COLUMN discord_id VARCHAR(32);
+  END IF;
+END $$;
+CREATE INDEX IF NOT EXISTS idx_dashboard_users_discord ON dashboard_users(discord_id);
 `;
 
 async function initDb() {
