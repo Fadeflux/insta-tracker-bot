@@ -739,9 +739,40 @@ async function getDashboardUser(username) {
 }
 
 async function upsertDashboardUser(username, passwordHash, role, platform, discordId) {
-  var sql = "INSERT INTO dashboard_users (username, password_hash, role, platform, discord_id) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (username) DO UPDATE SET password_hash = $2, role = $3, platform = $4, discord_id = $5 RETURNING *";
+  var sql = "INSERT INTO dashboard_users (username, password_hash, role, platform, discord_id, status, revoked_at, revoked_reason) " +
+    "VALUES ($1, $2, $3, $4, $5, 'active', NULL, NULL) " +
+    "ON CONFLICT (username) DO UPDATE SET " +
+    "  password_hash = $2, role = $3, platform = $4, discord_id = $5, " +
+    "  status = 'active', revoked_at = NULL, revoked_reason = NULL " +
+    "RETURNING *";
   var result = await pool.query(sql, [username, passwordHash, role || 'va', platform || 'all', discordId || null]);
   return result.rows[0];
+}
+
+// List ALL DB-stored dashboard users (ENV users are NOT in this table).
+// Used by the daily revocation sweep.
+async function getAllDashboardUsers() {
+  var result = await pool.query('SELECT * FROM dashboard_users ORDER BY username');
+  return result.rows;
+}
+
+// Mark a dashboard user as revoked (login blocked, DB record preserved).
+async function revokeDashboardUser(username, reason) {
+  var sql = "UPDATE dashboard_users SET status = 'revoked', revoked_at = NOW(), revoked_reason = $2, last_check_at = NOW() WHERE username = $1 RETURNING *";
+  var result = await pool.query(sql, [username, reason || 'auto-revocation']);
+  return result.rows[0] || null;
+}
+
+// Reactivate a previously revoked user (admin action).
+async function reactivateDashboardUser(username) {
+  var sql = "UPDATE dashboard_users SET status = 'active', revoked_at = NULL, revoked_reason = NULL WHERE username = $1 RETURNING *";
+  var result = await pool.query(sql, [username]);
+  return result.rows[0] || null;
+}
+
+// Touch last_check_at for a user we verified is still valid.
+async function touchDashboardUserCheck(username) {
+  await pool.query('UPDATE dashboard_users SET last_check_at = NOW() WHERE username = $1', [username]);
 }
 
 module.exports = {
@@ -773,7 +804,8 @@ module.exports = {
   awardDailyPoints, getWeeklyStandings, recordWeeklyWinner, getRecentWinners,
   createWeeklyDuels, resolveWeeklyDuels, getActiveDuels, getWeekBounds,
   // Dashboard
-  getDashboardUser, upsertDashboardUser,
+  getDashboardUser, upsertDashboardUser, getAllDashboardUsers,
+  revokeDashboardUser, reactivateDashboardUser, touchDashboardUserCheck,
   // Constants
   VIRAL_VIEWS, BON_VIEWS, MOYEN_VIEWS,
 };
