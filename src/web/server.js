@@ -28,12 +28,16 @@ function loadUsers() {
     }
   });
 
-  // Load DB users (skip any that exist in ENV)
+  // Load DB users (skip any that exist in ENV, skip revoked users)
   db.pool.query('SELECT * FROM dashboard_users').then(function(result) {
+    var revokedSkipped = 0;
     result.rows.forEach(function(row) {
       if (ENV_USERNAMES.has(row.username)) {
         console.log('[Users] Skipping DB user (ENV has priority): ' + row.username);
         db.pool.query('DELETE FROM dashboard_users WHERE username = $1', [row.username]).catch(function(){});
+      } else if (row.status === 'revoked') {
+        revokedSkipped++;
+        // Do NOT load revoked users — they cannot log in.
       } else {
         DASHBOARD_USERS[row.username] = {
           password: row.password_hash,
@@ -44,7 +48,7 @@ function loadUsers() {
         console.log('[Users] DB user loaded: ' + row.username + ' role=' + row.role + (row.discord_id ? ' discord_id=' + row.discord_id : ''));
       }
     });
-    console.log('[Users] Total: ' + Object.keys(DASHBOARD_USERS).length);
+    console.log('[Users] Total active: ' + Object.keys(DASHBOARD_USERS).length + (revokedSkipped > 0 ? ' (' + revokedSkipped + ' revoked users skipped)' : ''));
   }).catch(function(e) {
     console.log('[Users] DB error: ' + e.message + ' — using ENV only');
   });
@@ -117,32 +121,50 @@ function createWebServer() {
   app.use(express.json());
 
   // Login — returns allowed platforms
-  app.post('/api/login', function(req, res) {
+  app.post('/api/login', async function(req, res) {
     var username = req.body.username;
     var password = req.body.password;
     console.log('[Login] Attempt: ' + username + ' | stored role: ' + (DASHBOARD_USERS[username] ? DASHBOARD_USERS[username].role : 'NOT FOUND') + ' | stored platform: ' + (DASHBOARD_USERS[username] ? DASHBOARD_USERS[username].platform : 'N/A'));
-    if (DASHBOARD_USERS[username] && DASHBOARD_USERS[username].password === password) {
-      var user = DASHBOARD_USERS[username];
-      var token = Buffer.from(username + ':' + password).toString('base64');
-      var allowedPlatforms = [];
-      if (user.platform === 'all') {
-        allowedPlatforms = config.getActivePlatforms();
-      } else if (user.platform.indexOf(',') !== -1) {
-        allowedPlatforms = user.platform.split(',');
-      } else {
-        allowedPlatforms = [user.platform];
-      }
-      console.log('[Login] Success: ' + username + ' role=' + user.role + ' platform=' + user.platform);
-      return res.json({
-        token: token,
-        username: username,
-        role: user.role,
-        platform: user.platform,
-        discordId: user.discordId || null,
-        allowedPlatforms: allowedPlatforms,
-      });
+
+    if (!DASHBOARD_USERS[username] || DASHBOARD_USERS[username].password !== password) {
+      return res.status(401).json({ error: 'Invalid credentials' });
     }
-    return res.status(401).json({ error: 'Invalid credentials' });
+
+    // ENV users always bypass the DB check (they're your emergency access).
+    if (!ENV_USERNAMES.has(username)) {
+      try {
+        var dbRow = await db.getDashboardUser(username);
+        if (dbRow && dbRow.status === 'revoked') {
+          // Remove from in-memory map so subsequent attempts short-circuit
+          delete DASHBOARD_USERS[username];
+          console.log('[Login] Blocked: ' + username + ' is revoked (' + (dbRow.revoked_reason || 'no reason') + ')');
+          return res.status(403).json({ error: 'Compte desactive. Contacte un admin.' });
+        }
+      } catch (e) {
+        // DB unreachable — fall through to allow login, prefer availability over strict revocation
+        console.log('[Login] DB status check failed for ' + username + ': ' + e.message);
+      }
+    }
+
+    var user = DASHBOARD_USERS[username];
+    var token = Buffer.from(username + ':' + password).toString('base64');
+    var allowedPlatforms = [];
+    if (user.platform === 'all') {
+      allowedPlatforms = config.getActivePlatforms();
+    } else if (user.platform.indexOf(',') !== -1) {
+      allowedPlatforms = user.platform.split(',');
+    } else {
+      allowedPlatforms = [user.platform];
+    }
+    console.log('[Login] Success: ' + username + ' role=' + user.role + ' platform=' + user.platform);
+    return res.json({
+      token: token,
+      username: username,
+      role: user.role,
+      platform: user.platform,
+      discordId: user.discordId || null,
+      allowedPlatforms: allowedPlatforms,
+    });
   });
 
   // User info
@@ -660,6 +682,45 @@ function createWebServer() {
 
     console.log('[Admin] User deleted: ' + username);
     res.json({ success: true, deleted: username });
+  });
+
+  // List revoked dashboard users (not loaded in memory — read from DB)
+  app.get('/api/admin/revoked-users', checkAuth, checkAdmin, async function(req, res) {
+    try {
+      var result = await db.pool.query("SELECT username, role, platform, discord_id, revoked_at, revoked_reason FROM dashboard_users WHERE status = 'revoked' ORDER BY revoked_at DESC");
+      res.json({ users: result.rows });
+    } catch(err) { res.status(500).json({ error: err.message }); }
+  });
+
+  // Reactivate a previously revoked user.
+  app.post('/api/admin/users/:username/reactivate', checkAuth, checkAdmin, async function(req, res) {
+    try {
+      var username = req.params.username;
+      var row = await db.reactivateDashboardUser(username);
+      if (!row) return res.status(404).json({ error: 'Utilisateur non trouve ou pas revoque' });
+      // Reload into in-memory map
+      DASHBOARD_USERS[username] = {
+        password: row.password_hash,
+        role: row.role,
+        platform: row.platform,
+        discordId: row.discord_id || null,
+      };
+      console.log('[Admin] User reactivated: ' + username);
+      res.json({ success: true, username: username });
+    } catch(err) { res.status(500).json({ error: err.message }); }
+  });
+
+  // Trigger the dashboard user revocation sweep on demand (admin only).
+  app.post('/api/admin/sweep-users', checkAuth, checkAdmin, async function(req, res) {
+    try {
+      // Lazy require to avoid circular imports at load-time
+      var cron = require('../jobs/cron');
+      if (typeof cron.sweepDashboardUsers !== 'function') {
+        return res.status(500).json({ error: 'Sweep function not available' });
+      }
+      await cron.sweepDashboardUsers();
+      res.json({ success: true, message: 'Sweep lance — consulte les logs et la liste des revoques.' });
+    } catch(err) { res.status(500).json({ error: err.message }); }
   });
 
   // ==================== STATIC PAGES ====================
