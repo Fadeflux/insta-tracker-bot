@@ -473,12 +473,16 @@ async function runWeeklyCeremony(platform) {
     var today = new Date();
     var bounds = db.getWeekBounds(today);
 
+    // Use dedicated duels channel if configured, else fall back to results
+    var duelsChannel = await getChannel(platform, 'duels');
+    var resultsChannel = await getChannel(platform, 'results');
+    var targetChannel = duelsChannel || resultsChannel;
+
     // 1) Announce weekly winner
     var winner = await db.recordWeeklyWinner(bounds.start, bounds.end, platform);
-    var resultsChannel = await getChannel(platform, 'results');
 
-    if (winner && resultsChannel) {
-      await resultsChannel.send({
+    if (winner && targetChannel) {
+      await targetChannel.send({
         content: '🏆🏆🏆 **CHAMPION DE LA SEMAINE — ' + embeds.getPlatformLabel(platform) + '** 🏆🏆🏆\n\n' +
           '**<@' + winner.va_discord_id + '>** remporte la semaine du ' + bounds.start + ' au ' + bounds.end + ' !\n\n' +
           '🎯 Total points : **' + winner.total_points + '**\n' +
@@ -492,7 +496,7 @@ async function runWeeklyCeremony(platform) {
 
     // 2) Resolve current duels and announce results
     var resolvedDuels = await db.resolveWeeklyDuels(bounds.start, bounds.end, platform);
-    if (resolvedDuels.length > 0 && resultsChannel) {
+    if (resolvedDuels.length > 0 && targetChannel) {
       var duelLines = resolvedDuels.map(function(d) {
         if (!d.winner_id) {
           return '🤝 <@' + d.va1_discord_id + '> vs <@' + d.va2_discord_id + '> — EGALITE (' + fmt(Number(d.va1_views)) + ' vs ' + fmt(Number(d.va2_views)) + ')';
@@ -504,7 +508,7 @@ async function runWeeklyCeremony(platform) {
         var loseViews = isV1 ? d.va2_views : d.va1_views;
         return '⚔️ <@' + winId + '> **bat** <@' + loserId + '> — ' + fmt(Number(winViews)) + ' vs ' + fmt(Number(loseViews)) + ' vues';
       });
-      await resultsChannel.send({
+      await targetChannel.send({
         content: '**⚔️ Resultats des duels de la semaine — ' + embeds.getPlatformLabel(platform) + '**\n\n' +
           duelLines.join('\n') + '\n\n' +
           '_Perdants : message de felicitations obligatoire au gagnant. Les nouveaux duels de la semaine prochaine arrivent !_'
@@ -519,12 +523,12 @@ async function runWeeklyCeremony(platform) {
     var vaList = vaMembers.map(function(m) { return { id: m.id, name: m.displayName }; });
     var newDuels = await db.createWeeklyDuels(nextBounds.start, nextBounds.end, platform, vaList);
 
-    if (newDuels.length > 0 && resultsChannel) {
+    if (newDuels.length > 0 && targetChannel) {
       var newDuelLines = newDuels.map(function(d, i) {
         return '⚔️ **Duel #' + (i + 1) + '** : <@' + d.va1_discord_id + '> VS <@' + d.va2_discord_id + '>';
       });
       var oddVA = vaList.length % 2 === 1 ? '\n\n_' + vaList[vaList.length - 1].name + ' se repose cette semaine (nombre impair de VA)._' : '';
-      await resultsChannel.send({
+      await targetChannel.send({
         content: '**⚔️ DUELS DE LA SEMAINE — ' + embeds.getPlatformLabel(platform) + '**\n' +
           'Du lundi ' + nextBounds.start + ' au dimanche ' + nextBounds.end + '\n\n' +
           newDuelLines.join('\n') + '\n\n' +
