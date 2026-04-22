@@ -258,13 +258,30 @@ DO $$ BEGIN
   END IF;
 END $$;
 CREATE INDEX IF NOT EXISTS idx_dashboard_users_discord ON dashboard_users(discord_id);
+
+-- === V6: auto-revoke when a user leaves Discord or loses their role ===
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='dashboard_users' AND column_name='status') THEN
+    ALTER TABLE dashboard_users ADD COLUMN status VARCHAR(16) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'revoked'));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='dashboard_users' AND column_name='revoked_at') THEN
+    ALTER TABLE dashboard_users ADD COLUMN revoked_at TIMESTAMPTZ;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='dashboard_users' AND column_name='revoked_reason') THEN
+    ALTER TABLE dashboard_users ADD COLUMN revoked_reason TEXT;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='dashboard_users' AND column_name='last_check_at') THEN
+    ALTER TABLE dashboard_users ADD COLUMN last_check_at TIMESTAMPTZ;
+  END IF;
+END $$;
+CREATE INDEX IF NOT EXISTS idx_dashboard_users_status ON dashboard_users(status);
 `;
 
 async function initDb() {
   try {
     await pool.query(SCHEMA);
     await pool.query(MIGRATIONS);
-    logger.info('Database schema initialized (v4 gamification + per-account tracking)');
+    logger.info('Database schema initialized (v6 auto-revocation + gamification + per-account tracking)');
   } catch (err) {
     logger.error('Database init failed', { error: err.message });
     throw err;
