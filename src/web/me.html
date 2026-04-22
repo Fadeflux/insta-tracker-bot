@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0d0d16">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Shinra">
+<link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" href="/icon-192.png">
+<title>Shinra — Mon espace</title>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+:root{--bg:#06060b;--bg2:#0d0d16;--bg3:#14142a;--bg4:#1c1c38;--pink:#e1306c;--purple:#7c3aed;--blue:#3b82f6;--twitter:#1da1f2;--green:#10b981;--orange:#f59e0b;--red:#ef4444;--text:#f1f5f9;--text2:#94a3b8;--text3:#64748b;--border:rgba(255,255,255,0.07);--accent:var(--pink);--radius:14px}
+body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;padding-bottom:env(safe-area-inset-bottom);-webkit-font-smoothing:antialiased}
+::selection{background:var(--accent);color:#fff}
+
+/* Login (reused minimal) */
+.login-wrap{display:flex;justify-content:center;align-items:center;min-height:100vh;padding:20px;background:radial-gradient(ellipse at 30% 20%,rgba(124,58,237,0.15),transparent 60%),var(--bg)}
+.login-card{background:var(--bg2);border:1px solid var(--border);border-radius:24px;padding:40px 28px;width:100%;max-width:380px}
+.login-card .logo{text-align:center;margin-bottom:28px}
+.login-card .logo h1{font-size:26px;font-weight:800;background:linear-gradient(135deg,var(--pink),var(--purple));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.login-card .logo p{color:var(--text3);font-size:11px;margin-top:6px;letter-spacing:1px;text-transform:uppercase}
+.login-card input{width:100%;padding:14px 16px;margin-bottom:12px;border:1px solid var(--border);border-radius:12px;background:var(--bg3);color:var(--text);font-size:15px;outline:none;transition:border 0.2s;font-family:inherit}
+.login-card input:focus{border-color:var(--purple)}
+.login-card .btn{width:100%;padding:15px;background:linear-gradient(135deg,var(--pink),var(--purple));color:#fff;border:none;border-radius:12px;font-size:14px;font-weight:700;cursor:pointer;letter-spacing:0.5px}
+.login-err{color:var(--red);text-align:center;margin-top:12px;font-size:13px;display:none}
+
+/* App */
+.app{display:none;padding:env(safe-area-inset-top) 0 0 0}
+.topbar{padding:14px 18px;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;background:rgba(6,6,11,0.92);backdrop-filter:blur(14px);z-index:10;border-bottom:1px solid var(--border)}
+.topbar h1{font-size:16px;font-weight:800;background:linear-gradient(135deg,var(--accent),var(--purple));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.topbar .tools{display:flex;gap:6px;align-items:center}
+.plat-pill{padding:6px 12px;font-size:10px;font-weight:700;border-radius:14px;background:var(--bg3);color:var(--text2);border:1px solid var(--border);text-transform:uppercase;cursor:pointer}
+.plat-pill.on{background:linear-gradient(135deg,var(--accent),var(--purple));color:#fff;border-color:transparent}
+.logout{padding:6px 10px;font-size:11px;color:var(--text3);background:transparent;border:1px solid var(--border);border-radius:14px;cursor:pointer}
+
+.main{padding:16px 14px 80px 14px;max-width:640px;margin:0 auto}
+
+/* Hero card (main status) */
+.hero{background:linear-gradient(135deg,rgba(124,58,237,0.12),rgba(225,48,108,0.08));border:1px solid var(--border);border-radius:20px;padding:22px 20px;margin-bottom:14px;position:relative;overflow:hidden}
+.hero .greet{font-size:13px;color:var(--text3);margin-bottom:4px}
+.hero .name{font-size:22px;font-weight:800;margin-bottom:18px}
+.hero .progress-wrap{margin-bottom:6px}
+.hero .progress-info{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px}
+.hero .progress-info .count{font-size:32px;font-weight:800;line-height:1}
+.hero .progress-info .count span{font-size:18px;color:var(--text3);font-weight:600}
+.hero .progress-info .lbl{font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;font-weight:700}
+.hero .bar-bg{height:8px;background:var(--bg3);border-radius:8px;overflow:hidden}
+.hero .bar-fill{height:100%;background:linear-gradient(90deg,var(--accent),var(--purple));border-radius:8px;transition:width 0.6s ease}
+.hero .bar-fill.done{background:linear-gradient(90deg,var(--green),#34d399)}
+.hero .status{margin-top:14px;font-size:13px;color:var(--text2);line-height:1.4}
+.hero .status .ok{color:var(--green);font-weight:700}
+.hero .status .warn{color:var(--orange);font-weight:700}
+.hero .status .bad{color:var(--red);font-weight:700}
+
+/* KPI row */
+.kpi-row{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px}
+.kpi-mini{background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:14px 10px;text-align:center}
+.kpi-mini .val{font-size:20px;font-weight:800;line-height:1}
+.kpi-mini .lbl{font-size:9px;color:var(--text3);margin-top:4px;text-transform:uppercase;letter-spacing:0.8px;font-weight:600}
+.kpi-mini .sub{font-size:9px;color:var(--text3);margin-top:2px}
+
+/* Section */
+.section{margin-bottom:14px}
+.section-title{font-size:11px;color:var(--text3);font-weight:700;text-transform:uppercase;letter-spacing:1px;margin:14px 2px 8px 2px;display:flex;align-items:center;gap:6px}
+.section-title .dot{width:5px;height:5px;border-radius:50%;background:var(--accent)}
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:16px 14px}
+
+/* Rank card */
+.rank-card .my-rank{display:flex;align-items:baseline;gap:10px;margin-bottom:12px}
+.rank-card .my-rank .pos{font-size:34px;font-weight:800;line-height:1}
+.rank-card .my-rank .total{font-size:14px;color:var(--text3)}
+.rank-card .top3{border-top:1px solid var(--border);padding-top:10px;margin-top:2px}
+.rank-card .top3-item{display:flex;justify-content:space-between;padding:6px 0;font-size:13px}
+.rank-card .top3-item .name{color:var(--text2)}
+.rank-card .top3-item .val{color:var(--text3);font-size:11px}
+
+/* Duel card */
+.duel-card{border:1px solid var(--border);border-radius:var(--radius);padding:16px 14px;background:linear-gradient(135deg,rgba(225,48,108,0.08),rgba(59,130,246,0.05))}
+.duel-card .vs-row{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:10px;margin-bottom:10px}
+.duel-card .side{text-align:center}
+.duel-card .side.me{color:var(--text)}
+.duel-card .side .nm{font-size:13px;font-weight:700;margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.duel-card .side .v{font-size:20px;font-weight:800}
+.duel-card .side.me .v{color:var(--green)}
+.duel-card .vs{font-size:14px;color:var(--text3);font-weight:800}
+.duel-card .verdict{text-align:center;font-size:12px;margin-top:6px;padding:8px;border-radius:10px;background:var(--bg3)}
+.duel-card .verdict.win{color:var(--green)}
+.duel-card .verdict.lose{color:var(--red)}
+.duel-card .verdict.tie{color:var(--orange)}
+
+/* Post list */
+.post-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-bottom:10px}
+.post-card .head{display:flex;justify-content:space-between;align-items:start;margin-bottom:10px;gap:8px}
+.post-card .head .meta{font-size:11px;color:var(--text3)}
+.post-card .head .meta .acc{color:var(--accent);font-weight:700}
+.post-card .head .meta .time{display:block;margin-top:2px}
+.post-card .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:10px}
+.post-card .stat{text-align:center;padding:8px 4px;background:var(--bg3);border-radius:10px}
+.post-card .stat .n{font-size:14px;font-weight:800}
+.post-card .stat .l{font-size:8px;color:var(--text3);text-transform:uppercase;letter-spacing:0.5px;margin-top:2px}
+.post-card .footer{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.post-card .link{color:var(--accent);font-size:11px;font-weight:700;text-decoration:none}
+.perf-badge{display:inline-block;font-size:9px;font-weight:800;padding:4px 9px;border-radius:14px;text-transform:uppercase;letter-spacing:0.5px}
+.perf-viral{background:rgba(255,0,255,0.14);color:#ff66ff;border:1px solid rgba(255,0,255,0.3)}
+.perf-bon{background:rgba(16,185,129,0.14);color:#34d399;border:1px solid rgba(16,185,129,0.3)}
+.perf-moyen{background:rgba(245,158,11,0.14);color:#fbbf24;border:1px solid rgba(245,158,11,0.3)}
+.perf-flop{background:rgba(239,68,68,0.14);color:#f87171;border:1px solid rgba(239,68,68,0.3)}
+
+/* Empty state */
+.empty{text-align:center;padding:32px 20px;color:var(--text3);font-size:13px}
+
+/* Refresh indicator */
+.refresh-btn{position:fixed;bottom:18px;right:18px;width:52px;height:52px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--purple));border:none;color:#fff;font-size:20px;box-shadow:0 8px 24px rgba(124,58,237,0.4);cursor:pointer;z-index:20;display:flex;align-items:center;justify-content:center;padding-bottom:env(safe-area-inset-bottom)}
+.refresh-btn:active{transform:scale(0.92)}
+.refresh-btn.spin{animation:spin 0.8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* Error / loading */
+.loading{text-align:center;padding:80px 20px;color:var(--text3)}
+.error-box{background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.3);border-radius:12px;padding:14px;color:#f87171;font-size:13px}
+
+/* Link back to full dashboard (for admin/manager) */
+.back-link{text-align:center;margin-top:20px;padding:12px;color:var(--text3);font-size:11px;text-decoration:none;display:block;border:1px dashed var(--border);border-radius:10px}
+.back-link:hover{color:var(--text2)}
+</style>
+</head>
+<body>
+
+<div class="login-wrap" id="loginPage">
+  <div class="login-card">
+    <div class="logo"><h1>Shinra</h1><p>Mon espace VA</p></div>
+    <input type="text" id="username" placeholder="Utilisateur" autocomplete="username">
+    <input type="password" id="password" placeholder="Mot de passe" autocomplete="current-password" onkeypress="if(event.key==='Enter')doLogin()">
+    <button class="btn" onclick="doLogin()">Connexion</button>
+    <p class="login-err" id="loginErr">Identifiants incorrects</p>
+  </div>
+</div>
+
+<div class="app" id="app">
+  <div class="topbar">
+    <h1 id="topTitle">Mon espace</h1>
+    <div class="tools">
+      <div id="platPills"></div>
+      <button class="logout" onclick="doLogout()">↩</button>
+    </div>
+  </div>
+  <div class="main" id="content">
+    <div class="loading">Chargement...</div>
+  </div>
+  <button class="refresh-btn" onclick="refresh()" id="refreshBtn" aria-label="Rafraichir">↻</button>
+</div>
+
+<script>
+var T = localStorage.getItem('mt');
+var PLAT = localStorage.getItem('mp') || null;
+var ALLOWED = JSON.parse(localStorage.getItem('map') || '[]');
+var ME_DISCORD = localStorage.getItem('mdid') || null;
+var ME_USER = localStorage.getItem('muser') || '';
+if (T) showApp();
+
+function doLogin() {
+  var u = document.getElementById('username').value;
+  var p = document.getElementById('password').value;
+  fetch('/api/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: u, password: p })
+  }).then(function(r) { return r.json(); }).then(function(d) {
+    if (d.token) {
+      if (!d.discordId) {
+        document.getElementById('loginErr').textContent = 'Ton compte n\'est pas lie a un Discord ID. Contacte un admin.';
+        document.getElementById('loginErr').style.display = 'block';
+        return;
+      }
+      T = d.token;
+      localStorage.setItem('mt', T);
+      localStorage.setItem('muser', d.username);
+      localStorage.setItem('mdid', d.discordId);
+      localStorage.setItem('mrole', d.role || 'va');
+      localStorage.setItem('map', JSON.stringify(d.allowedPlatforms || ['instagram']));
+      ALLOWED = d.allowedPlatforms || ['instagram'];
+      ME_DISCORD = d.discordId;
+      ME_USER = d.username;
+      PLAT = ALLOWED[0] || 'instagram';
+      localStorage.setItem('mp', PLAT);
+      showApp();
+    } else {
+      document.getElementById('loginErr').textContent = d.error || 'Identifiants incorrects';
+      document.getElementById('loginErr').style.display = 'block';
+    }
+  }).catch(function() {
+    document.getElementById('loginErr').style.display = 'block';
+  });
+}
+
+function doLogout() {
+  localStorage.removeItem('mt');
+  localStorage.removeItem('muser');
+  localStorage.removeItem('mdid');
+  localStorage.removeItem('mrole');
+  localStorage.removeItem('map');
+  localStorage.removeItem('mp');
+  location.reload();
+}
+
+function showApp() {
+  document.getElementById('loginPage').style.display = 'none';
+  document.getElementById('app').style.display = 'block';
+  renderPlatPills();
+  loadOverview();
+}
+
+function renderPlatPills() {
+  var host = document.getElementById('platPills');
+  host.innerHTML = '';
+  if (ALLOWED.length <= 1) return;
+  ALLOWED.forEach(function(p) {
+    var b = document.createElement('button');
+    b.className = 'plat-pill' + (p === PLAT ? ' on' : '');
+    b.textContent = p === 'twitter' ? '🐦' : p === 'geelark' ? '📱' : '📸';
+    b.onclick = function() { PLAT = p; localStorage.setItem('mp', p); renderPlatPills(); loadOverview(); };
+    host.appendChild(b);
+  });
+}
+
+function fm(n) { return n == null ? '0' : Number(n).toLocaleString('fr-FR'); }
+function escHtml(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+
+function perfBadge(p) {
+  var m = { viral: '🔥 VIRAL', bon: '✅ BON', moyen: '➡️ MOY', flop: '⬇️ FLOP' };
+  return '<span class="perf-badge perf-' + (p || 'flop') + '">' + (m[p] || '⬇️ FLOP') + '</span>';
+}
+
+function refresh() {
+  var btn = document.getElementById('refreshBtn');
+  btn.classList.add('spin');
+  loadOverview().then(function() {
+    setTimeout(function() { btn.classList.remove('spin'); }, 400);
+  });
+}
+
+function loadOverview() {
+  var url = '/api/me/overview' + (PLAT ? '?platform=' + PLAT : '');
+  return fetch(url, { headers: { 'X-Auth-Token': T } })
+    .then(function(r) { if (r.status === 401) { doLogout(); throw new Error('unauth'); } return r.json(); })
+    .then(function(d) {
+      if (d.error) {
+        document.getElementById('content').innerHTML =
+          '<div class="error-box">' + escHtml(d.error) + '</div>';
+        return;
+      }
+      render(d);
+    })
+    .catch(function(e) {
+      if (e.message !== 'unauth') {
+        document.getElementById('content').innerHTML =
+          '<div class="error-box">Erreur de chargement. Reessaye.</div>';
+      }
+    });
+}
+
+function render(d) {
+  var h = '';
+  var platLabel = { instagram: 'Instagram', twitter: 'Twitter', geelark: 'Geelark' }[d.platform] || d.platform;
+
+  // Hero: goal progress
+  var done = d.goal.done;
+  var req = d.goal.required;
+  var progress = d.goal.progress;
+  var doneClass = done >= req ? 'done' : '';
+  var statusMsg = '';
+  if (done === 0) statusMsg = '<span class="bad">Aucun post aujourd\'hui</span> — c\'est le moment de commencer.';
+  else if (done < req) statusMsg = 'Plus que <span class="warn">' + (req - done) + ' post' + (req - done > 1 ? 's' : '') + '</span> pour atteindre l\'objectif.';
+  else statusMsg = '<span class="ok">Objectif atteint !</span> Continue pour monter dans le classement.';
+
+  h += '<div class="hero">';
+  h += '<div class="greet">Salut</div>';
+  h += '<div class="name">' + escHtml(ME_USER || 'VA') + ' 👋</div>';
+  h += '<div class="progress-info">';
+  h += '<div><span class="count">' + done + '<span>/' + req + '</span></span></div>';
+  h += '<div class="lbl">Posts aujourd\'hui · ' + platLabel + '</div>';
+  h += '</div>';
+  h += '<div class="bar-bg"><div class="bar-fill ' + doneClass + '" style="width:' + progress + '%"></div></div>';
+  h += '<div class="status">' + statusMsg + '</div>';
+  h += '</div>';
+
+  // KPI row: streak, weekly points, rank
+  var rankTxt = d.rank.position ? '#' + d.rank.position : '—';
+  h += '<div class="kpi-row">';
+  h += '<div class="kpi-mini"><div class="val" style="color:var(--orange)">🔥 ' + d.streak.current + '</div><div class="lbl">Streak</div><div class="sub">record ' + d.streak.best + ' j</div></div>';
+  h += '<div class="kpi-mini"><div class="val" style="color:var(--purple)">' + d.weekly_points.total_points + '</div><div class="lbl">Pts semaine</div><div class="sub">' + d.weekly_points.podium_count + ' podium' + (d.weekly_points.podium_count > 1 ? 's' : '') + '</div></div>';
+  h += '<div class="kpi-mini"><div class="val" style="color:var(--accent)">' + rankTxt + '</div><div class="lbl">Rang jour</div><div class="sub">' + d.rank.total + ' VA actifs</div></div>';
+  h += '</div>';
+
+  // Duel (if active)
+  if (d.duel) {
+    var diff = d.duel.my_views - d.duel.opponent_views;
+    var verdict, vClass;
+    if (diff > 0) { verdict = '🟢 Tu es en tete · +' + fm(diff) + ' vues'; vClass = 'win'; }
+    else if (diff < 0) { verdict = '🔴 Tu es en retard · -' + fm(Math.abs(diff)) + ' vues'; vClass = 'lose'; }
+    else { verdict = '🟡 Egalite parfaite'; vClass = 'tie'; }
+
+    h += '<div class="section-title"><span class="dot"></span>Ton duel de la semaine</div>';
+    h += '<div class="duel-card">';
+    h += '<div class="vs-row">';
+    h += '<div class="side me"><div class="nm">Toi</div><div class="v">' + fm(d.duel.my_views) + '</div></div>';
+    h += '<div class="vs">VS</div>';
+    h += '<div class="side"><div class="nm">' + escHtml(d.duel.opponent_name) + '</div><div class="v">' + fm(d.duel.opponent_views) + '</div></div>';
+    h += '</div>';
+    h += '<div class="verdict ' + vClass + '">' + verdict + '</div>';
+    h += '</div>';
+  }
+
+  // Rank card with top 3
+  h += '<div class="section-title"><span class="dot"></span>Classement du jour</div>';
+  h += '<div class="card rank-card">';
+  if (d.rank.position) {
+    h += '<div class="my-rank"><div class="pos">#' + d.rank.position + '</div><div class="total">sur ' + d.rank.total + ' VA · ' + fm(d.rank.my_views) + ' vues</div></div>';
+  } else {
+    h += '<div class="my-rank"><div class="pos" style="font-size:18px;color:var(--text3)">Pas encore classe</div></div>';
+  }
+  if (d.rank.top3 && d.rank.top3.length > 0) {
+    h += '<div class="top3">';
+    d.rank.top3.forEach(function(t, i) {
+      var medal = ['🥇', '🥈', '🥉'][i];
+      h += '<div class="top3-item"><span class="name">' + medal + ' ' + escHtml(t.name) + '</span><span class="val">' + t.post_count + ' posts · ' + fm(t.total_views) + ' vues</span></div>';
+    });
+    h += '</div>';
+  }
+  h += '</div>';
+
+  // Posts today
+  h += '<div class="section-title"><span class="dot"></span>Mes posts aujourd\'hui (' + d.posts.length + ')</div>';
+  if (d.posts.length === 0) {
+    h += '<div class="card empty">Aucun post encore. Envoie ton premier lien dans #links sur Discord !</div>';
+  } else {
+    d.posts.sort(function(a, b) { return new Date(b.created_at) - new Date(a.created_at); });
+    d.posts.forEach(function(p) {
+      var dt = new Date(p.created_at);
+      var timeStr = dt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+      h += '<div class="post-card">';
+      h += '<div class="head"><div class="meta">';
+      if (p.account) h += '<span class="acc">@' + escHtml(p.account) + '</span>';
+      else h += '<span style="color:var(--text3)">(compte non identifie)</span>';
+      h += '<span class="time">' + timeStr + ' · ' + (p.post_type || 'post') + '</span>';
+      h += '</div>' + perfBadge(p.perf) + '</div>';
+      h += '<div class="stats">';
+      h += '<div class="stat"><div class="n">' + fm(p.views) + '</div><div class="l">👁 Vues</div></div>';
+      h += '<div class="stat"><div class="n">' + fm(p.likes) + '</div><div class="l">❤ Likes</div></div>';
+      h += '<div class="stat"><div class="n">' + fm(p.comments) + '</div><div class="l">💬 Com.</div></div>';
+      h += '<div class="stat"><div class="n">' + fm(p.shares) + '</div><div class="l">🔄 Rep.</div></div>';
+      h += '</div>';
+      h += '<div class="footer"><a href="' + escHtml(p.url) + '" target="_blank" rel="noopener" class="link">Voir le post ↗</a></div>';
+      h += '</div>';
+    });
+  }
+
+  // Link to full dashboard (only for admin/manager)
+  if (localStorage.getItem('mrole') === 'admin' || localStorage.getItem('mrole') === 'manager') {
+    h += '<a href="/dashboard" class="back-link">⚙️ Accès dashboard complet</a>';
+  }
+
+  document.getElementById('content').innerHTML = h;
+}
+
+// Auto-refresh every 2 min when tab is visible
+setInterval(function() {
+  if (!document.hidden && T) loadOverview();
+}, 120000);
+
+// Service worker for PWA offline shell
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch(function(){});
+}
+</script>
+</body>
+</html>
