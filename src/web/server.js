@@ -3,8 +3,8 @@ var path = require('path');
 var config = require('../../config');
 var db = require('../db/queries');
 
-// DASHBOARD_USERS format: username:password:role:platform
-// Example: admin:admin123:admin:all,manager1:pass1:manager:instagram
+// DASHBOARD_USERS format: username:password:role:platform[:discord_id]
+// Example: admin:admin123:admin:all,aicha:pass1:va:instagram:123456789012345678
 var DASHBOARD_USERS = {};
 
 // Users defined in ENV — these can NEVER be overwritten by DB
@@ -22,8 +22,9 @@ function loadUsers() {
         password: parts[1],
         role: parts[2] || 'va',
         platform: parts[3] || 'all',
+        discordId: parts[4] || null,
       };
-      console.log('[Users] ENV user loaded: ' + username + ' role=' + (parts[2]||'va') + ' platform=' + (parts[3]||'all'));
+      console.log('[Users] ENV user loaded: ' + username + ' role=' + (parts[2]||'va') + ' platform=' + (parts[3]||'all') + (parts[4] ? ' discord_id=' + parts[4] : ''));
     }
   });
 
@@ -38,8 +39,9 @@ function loadUsers() {
           password: row.password_hash,
           role: row.role,
           platform: row.platform,
+          discordId: row.discord_id || null,
         };
-        console.log('[Users] DB user loaded: ' + row.username + ' role=' + row.role);
+        console.log('[Users] DB user loaded: ' + row.username + ' role=' + row.role + (row.discord_id ? ' discord_id=' + row.discord_id : ''));
       }
     });
     console.log('[Users] Total: ' + Object.keys(DASHBOARD_USERS).length);
@@ -58,6 +60,7 @@ function checkAuth(req, res, next) {
       req.user = parts[0];
       req.userRole = DASHBOARD_USERS[parts[0]].role;
       req.userPlatform = DASHBOARD_USERS[parts[0]].platform;
+      req.userDiscordId = DASHBOARD_USERS[parts[0]].discordId || null;
       return next();
     }
   } catch(e) {}
@@ -135,6 +138,7 @@ function createWebServer() {
         username: username,
         role: user.role,
         platform: user.platform,
+        discordId: user.discordId || null,
         allowedPlatforms: allowedPlatforms,
       });
     }
@@ -156,6 +160,7 @@ function createWebServer() {
       username: req.user,
       role: user.role,
       platform: user.platform,
+      discordId: user.discordId || null,
       allowedPlatforms: allowedPlatforms,
     });
   });
@@ -448,6 +453,125 @@ function createWebServer() {
     } catch(err) { res.status(500).json({ error: err.message }); }
   });
 
+  // ==================== VA PERSONAL OVERVIEW (/me page) ====================
+
+  // Returns everything a VA needs to see their own status in one call.
+  // Requires the user to have a discord_id linked. Platform is resolved from
+  // the user's allowed platforms (if 'all', use the currently selected one).
+  app.get('/api/me/overview', checkAuth, async function(req, res) {
+    try {
+      var discordId = req.userDiscordId;
+      if (!discordId) {
+        return res.status(400).json({ error: 'Aucun Discord ID associe a ce compte. Contacte un admin pour lier ton compte Discord.' });
+      }
+      var platform = getEffectivePlatform(req);
+      // For 'all' users without ?platform=, pick the first allowed platform
+      if (!platform) {
+        var allowed = req.userPlatform === 'all' ? config.getActivePlatforms() : req.userPlatform.split(',');
+        platform = allowed[0] || 'instagram';
+      }
+
+      var today = new Date().toISOString().split('T')[0];
+
+      // Ensure today's daily summary is fresh, then fetch it for ranking
+      await db.computeDailySummary(today, platform);
+      var leaderboard = await db.getLeaderboard(today, platform);
+      var myIndex = leaderboard.findIndex(function(r) { return r.va_discord_id === discordId; });
+      var myStats = myIndex >= 0 ? leaderboard[myIndex] : null;
+
+      // Today's posts with their latest snapshot
+      var myPosts = await db.getVaPostsToday(discordId, today, platform);
+      var postsWithStats = [];
+      for (var i = 0; i < myPosts.length; i++) {
+        var snap = await db.getLatestSnapshot(myPosts[i].id);
+        postsWithStats.push({
+          id: myPosts[i].id,
+          url: myPosts[i].url,
+          account: myPosts[i].account_username || null,
+          post_type: myPosts[i].post_type,
+          created_at: myPosts[i].created_at,
+          caption: myPosts[i].caption,
+          views: snap ? Number(snap.views) || 0 : 0,
+          likes: snap ? Number(snap.likes) || 0 : 0,
+          comments: snap ? Number(snap.comments) || 0 : 0,
+          shares: snap ? Number(snap.shares) || 0 : 0,
+          perf: getPerf(snap ? Number(snap.views) || 0 : 0),
+        });
+      }
+
+      // Streak for this platform
+      var streaks = await db.getAllStreaks(platform);
+      var myStreak = streaks.find(function(s) { return s.va_discord_id === discordId; }) || null;
+
+      // Weekly points standings (for my rank this week)
+      var bounds = db.getWeekBounds();
+      var weekly = await db.getWeeklyStandings(bounds.start, bounds.end, platform);
+      var myWeeklyIndex = weekly.findIndex(function(r) { return r.va_discord_id === discordId; });
+      var myWeekly = myWeeklyIndex >= 0 ? weekly[myWeeklyIndex] : null;
+
+      // Active duel this week
+      var activeDuels = await db.getActiveDuels(platform);
+      var myDuel = activeDuels.find(function(d) { return d.va1_discord_id === discordId || d.va2_discord_id === discordId; }) || null;
+      var duelData = null;
+      if (myDuel) {
+        // Compute live views for both duelists
+        var viewsSql = "SELECT va_discord_id, COALESCE(SUM(s.views), 0)::bigint AS views " +
+          "FROM posts p LEFT JOIN LATERAL ( " +
+          "  SELECT views FROM snapshots sn WHERE sn.post_id = p.id AND COALESCE(sn.error, '') <> 'coaching_sent' " +
+          "  ORDER BY sn.scraped_at DESC LIMIT 1 " +
+          ") s ON true " +
+          "WHERE p.platform = $1 AND p.va_discord_id IN ($2, $3) " +
+          "AND p.created_at::date >= $4 AND p.created_at::date <= $5 " +
+          "GROUP BY va_discord_id";
+        var viewsResult = await db.pool.query(viewsSql, [platform, myDuel.va1_discord_id, myDuel.va2_discord_id, myDuel.week_start, myDuel.week_end]);
+        var viewsMap = {};
+        viewsResult.rows.forEach(function(r) { viewsMap[r.va_discord_id] = Number(r.views) || 0; });
+        var isV1 = myDuel.va1_discord_id === discordId;
+        duelData = {
+          week_start: myDuel.week_start,
+          week_end: myDuel.week_end,
+          my_name: isV1 ? myDuel.va1_name : myDuel.va2_name,
+          opponent_name: isV1 ? myDuel.va2_name : myDuel.va1_name,
+          opponent_id: isV1 ? myDuel.va2_discord_id : myDuel.va1_discord_id,
+          my_views: viewsMap[discordId] || 0,
+          opponent_views: viewsMap[isV1 ? myDuel.va2_discord_id : myDuel.va1_discord_id] || 0,
+        };
+      }
+
+      // Goal progress (6 posts/day)
+      var goalPosts = 6;
+      var goalProgress = Math.min(100, Math.round((postsWithStats.length / goalPosts) * 100));
+
+      res.json({
+        discordId: discordId,
+        username: req.user,
+        platform: platform,
+        date: today,
+        goal: { required: goalPosts, done: postsWithStats.length, progress: goalProgress },
+        rank: {
+          position: myIndex >= 0 ? myIndex + 1 : null,
+          total: leaderboard.length,
+          my_views: myStats ? Number(myStats.total_views) : 0,
+          my_likes: myStats ? Number(myStats.total_likes) : 0,
+          top3: leaderboard.slice(0, 3).map(function(r) {
+            return { name: r.va_name, post_count: r.post_count, total_views: Number(r.total_views) };
+          }),
+        },
+        streak: myStreak ? {
+          current: Number(myStreak.current_streak),
+          best: Number(myStreak.best_streak),
+        } : { current: 0, best: 0 },
+        weekly_points: myWeekly ? {
+          position: myWeeklyIndex + 1,
+          total_points: Number(myWeekly.total_points),
+          podium_count: Number(myWeekly.podium_count),
+        } : { position: null, total_points: 0, podium_count: 0 },
+        duel: duelData,
+        posts: postsWithStats,
+      });
+    } catch(err) { res.status(500).json({ error: err.message }); }
+  });
+
   // ==================== ADMIN: USER MANAGEMENT ====================
 
   function checkAdmin(req, res, next) {
@@ -458,7 +582,7 @@ function createWebServer() {
   // List all dashboard users
   app.get('/api/admin/users', checkAuth, checkAdmin, function(req, res) {
     var users = Object.keys(DASHBOARD_USERS).map(function(u) {
-      return { username: u, role: DASHBOARD_USERS[u].role, platform: DASHBOARD_USERS[u].platform };
+      return { username: u, role: DASHBOARD_USERS[u].role, platform: DASHBOARD_USERS[u].platform, discordId: DASHBOARD_USERS[u].discordId || null };
     });
     res.json({ users: users });
   });
@@ -469,6 +593,7 @@ function createWebServer() {
     var password = req.body.password || '';
     var role = req.body.role || 'va';
     var platform = req.body.platform || 'all';
+    var discordId = (req.body.discord_id || req.body.discordId || '').trim() || null;
 
     if (!username || username.length < 2) return res.status(400).json({ error: 'Username trop court (min 2 caracteres)' });
     if (!password || password.length < 4) return res.status(400).json({ error: 'Mot de passe trop court (min 4 caracteres)' });
@@ -480,17 +605,20 @@ function createWebServer() {
       var allValid = platParts.every(function(p) { return validPlats.indexOf(p) !== -1; });
       if (!allValid) return res.status(400).json({ error: 'Plateforme invalide' });
     }
+    if (discordId && !/^\d{17,20}$/.test(discordId)) {
+      return res.status(400).json({ error: 'Discord ID doit faire 17-20 chiffres' });
+    }
 
     var isNew = !DASHBOARD_USERS[username];
-    DASHBOARD_USERS[username] = { password: password, role: role, platform: platform };
+    DASHBOARD_USERS[username] = { password: password, role: role, platform: platform, discordId: discordId };
 
     // Also save to DB for persistence across restarts
-    db.upsertDashboardUser(username, password, role, platform).catch(function(e) {
+    db.upsertDashboardUser(username, password, role, platform, discordId).catch(function(e) {
       console.error('Failed to save user to DB:', e.message);
     });
 
-    console.log('[Admin] User ' + (isNew ? 'created' : 'updated') + ': ' + username + ' (' + role + '/' + platform + ')');
-    res.json({ success: true, action: isNew ? 'created' : 'updated', username: username, role: role, platform: platform });
+    console.log('[Admin] User ' + (isNew ? 'created' : 'updated') + ': ' + username + ' (' + role + '/' + platform + ')' + (discordId ? ' discord_id=' + discordId : ''));
+    res.json({ success: true, action: isNew ? 'created' : 'updated', username: username, role: role, platform: platform, discordId: discordId });
   });
 
   // Update user platform/role (without changing password)
@@ -501,15 +629,20 @@ function createWebServer() {
     var role = req.body.role || DASHBOARD_USERS[username].role;
     var platform = req.body.platform || DASHBOARD_USERS[username].platform;
     var password = req.body.password || DASHBOARD_USERS[username].password;
+    var discordId = req.body.discord_id !== undefined ? req.body.discord_id : (req.body.discordId !== undefined ? req.body.discordId : DASHBOARD_USERS[username].discordId);
+    if (discordId === '') discordId = null;
+    if (discordId && !/^\d{17,20}$/.test(String(discordId))) {
+      return res.status(400).json({ error: 'Discord ID doit faire 17-20 chiffres' });
+    }
 
-    DASHBOARD_USERS[username] = { password: password, role: role, platform: platform };
+    DASHBOARD_USERS[username] = { password: password, role: role, platform: platform, discordId: discordId || null };
 
-    db.upsertDashboardUser(username, password, role, platform).catch(function(e) {
+    db.upsertDashboardUser(username, password, role, platform, discordId || null).catch(function(e) {
       console.error('Failed to update user in DB:', e.message);
     });
 
-    console.log('[Admin] User updated: ' + username + ' (' + role + '/' + platform + ')');
-    res.json({ success: true, username: username, role: role, platform: platform });
+    console.log('[Admin] User updated: ' + username + ' (' + role + '/' + platform + ')' + (discordId ? ' discord_id=' + discordId : ''));
+    res.json({ success: true, username: username, role: role, platform: platform, discordId: discordId || null });
   });
 
   // Delete a dashboard user
@@ -529,8 +662,41 @@ function createWebServer() {
     res.json({ success: true, deleted: username });
   });
 
+  // ==================== STATIC PAGES ====================
+
   app.get('/', function(req, res) {
     res.sendFile(path.join(__dirname, 'dashboard.html'));
+  });
+
+  // VA personal mobile page (PWA entry point)
+  app.get('/me', function(req, res) {
+    res.sendFile(path.join(__dirname, 'me.html'));
+  });
+
+  // Admins / managers can use this shortcut to reach the full dashboard
+  app.get('/dashboard', function(req, res) {
+    res.sendFile(path.join(__dirname, 'dashboard.html'));
+  });
+
+  // PWA manifest + service worker
+  app.get('/manifest.json', function(req, res) {
+    res.setHeader('Content-Type', 'application/manifest+json');
+    res.sendFile(path.join(__dirname, 'manifest.json'));
+  });
+  app.get('/sw.js', function(req, res) {
+    res.setHeader('Content-Type', 'application/javascript');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.sendFile(path.join(__dirname, 'sw.js'));
+  });
+
+  // PWA icons (served from src/web/)
+  app.get('/icon-192.png', function(req, res) {
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.sendFile(path.join(__dirname, 'icon-192.png'));
+  });
+  app.get('/icon-512.png', function(req, res) {
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.sendFile(path.join(__dirname, 'icon-512.png'));
   });
 
   var port = process.env.PORT || 3000;
