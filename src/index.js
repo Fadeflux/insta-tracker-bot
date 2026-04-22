@@ -14,6 +14,7 @@ var { handleCommand } = require('./bot/commands');
 var { initCronJobs } = require('./jobs/cron');
 var { setDiscordClient, createNotifyWorker } = require('./jobs/notifyWorker');
 var { createWebServer } = require('./web/server');
+var { runBackfill } = require('./jobs/backfillAccounts');
 console.log('All modules loaded OK');
 
 var client = new Client({
@@ -51,6 +52,9 @@ async function start() {
     console.log('Initializing database...');
     await initDb();
     console.log('Database ready');
+
+    // Run one-shot account backfill (fast Twitter phase sync, slow IG phase async)
+    runBackfill().catch(function(err) { console.error('Backfill error:', err.message); });
 
     // Start web dashboard
     createWebServer();
