@@ -80,7 +80,12 @@ function initCronJobs(client) {
     try { await runForEachPlatform(runWeeklyCeremony); } catch (err) { console.error('Weekly ceremony failed', err.message); }
   }, { timezone: config.timezone });
 
-  console.log('Cron jobs initialized (multi-platform, gamification)');
+  // Dashboard user revocation sweep — every 6 hours (02h, 08h, 14h, 20h Europe/Paris)
+  cron.schedule('0 2,8,14,20 * * *', async function() {
+    try { await sweepDashboardUsers(); } catch (err) { console.error('Dashboard revocation sweep failed', err.message); }
+  }, { timezone: config.timezone });
+
+  console.log('Cron jobs initialized (multi-platform, gamification, auto-revocation)');
 }
 
 // Run a function for each active platform
@@ -554,4 +559,179 @@ async function sendVaDM(discordId, content) {
   }
 }
 
-module.exports = { initCronJobs: initCronJobs, sendDailySummaryForPlatform: sendDailySummaryForPlatform, sendVaDM: sendVaDM };
+// =====================================================================
+// ===== DASHBOARD USER AUTO-REVOCATION =====
+// =====================================================================
+//
+// Runs once per day. For each DB-stored dashboard user with a linked
+// discord_id, verifies:
+//   1. That discord_id is still a member of the guild(s) corresponding
+//      to the user's platform(s).
+//   2. That the member still has the right Discord role matching their
+//      dashboard role (VA role for 'va', manager role for 'manager',
+//      and admin Discord IDs list for 'admin').
+//
+// If either check fails, the account status is set to 'revoked'.
+// Revoked users can no longer log in, but their DB record is preserved
+// (including history) so an admin can reactivate if needed.
+//
+// ENV-defined users (DASHBOARD_USERS env var) are NEVER touched by this
+// sweep — they are your emergency backdoor.
+
+async function sweepDashboardUsers() {
+  if (!discordClient) {
+    console.log('[Revoke] Discord client not ready, skipping sweep');
+    return;
+  }
+
+  var users = await db.getAllDashboardUsers();
+  if (users.length === 0) {
+    console.log('[Revoke] No DB dashboard users to check');
+    return;
+  }
+
+  var revokedCount = 0;
+  var okCount = 0;
+  var errors = 0;
+
+  for (var i = 0; i < users.length; i++) {
+    var u = users[i];
+    // Skip users already revoked
+    if (u.status === 'revoked') continue;
+    // Skip users with no discord_id linked — nothing to check against
+    if (!u.discord_id) {
+      console.log('[Revoke] Skipping ' + u.username + ' (no discord_id linked)');
+      continue;
+    }
+
+    try {
+      var check = await checkUserStillValid(u.discord_id, u.role, u.platform);
+      if (check.valid) {
+        await db.touchDashboardUserCheck(u.username);
+        okCount++;
+      } else {
+        await db.revokeDashboardUser(u.username, check.reason);
+        revokedCount++;
+        console.log('[Revoke] ' + u.username + ' revoked — ' + check.reason);
+
+        // Try to notify the user & the admin channel
+        notifyRevocation(u, check.reason).catch(function(){});
+      }
+    } catch (err) {
+      errors++;
+      console.error('[Revoke] Error checking ' + u.username + ':', err.message);
+    }
+  }
+
+  console.log('[Revoke] Sweep complete — active:' + okCount + ' revoked:' + revokedCount + ' errors:' + errors);
+}
+
+// Determines whether a Discord ID still has valid access for a given
+// dashboard role+platform combination.
+// Returns { valid: boolean, reason?: string }.
+async function checkUserStillValid(discordId, role, platform) {
+  // Determine which platforms we need to check
+  var platformsToCheck = [];
+  if (platform === 'all') {
+    platformsToCheck = config.getActivePlatforms();
+  } else if (platform.indexOf(',') !== -1) {
+    platformsToCheck = platform.split(',').filter(function(p) { return !!config.platforms[p]; });
+  } else if (config.platforms[platform]) {
+    platformsToCheck = [platform];
+  }
+
+  if (platformsToCheck.length === 0) {
+    return { valid: false, reason: 'No active platform configured for this user' };
+  }
+
+  // Admins: valid if their Discord ID is in ADMIN_DISCORD_IDS AND they're still in at least one guild.
+  // Other roles: valid if they're in the guild of their platform AND still have the matching role.
+  var foundInAnyGuild = false;
+  var hasValidRoleSomewhere = false;
+  var checkedPlatforms = [];
+
+  for (var i = 0; i < platformsToCheck.length; i++) {
+    var p = platformsToCheck[i];
+    var plat = config.platforms[p];
+    if (!plat || !plat.guildId) continue;
+
+    var guild;
+    try {
+      guild = await discordClient.guilds.fetch(plat.guildId);
+      // Ensure member cache is warm
+      await guild.members.fetch({ user: discordId }).catch(function() {});
+    } catch (e) {
+      continue;
+    }
+
+    var member = guild.members.cache.get(discordId);
+    if (!member) continue; // Not in this guild
+
+    foundInAnyGuild = true;
+    checkedPlatforms.push(p);
+
+    // Check role based on dashboard role
+    if (role === 'admin') {
+      // Admin is valid if their Discord ID is in ADMIN_DISCORD_IDS (global check, not guild-specific)
+      if (config.isAdmin(discordId)) {
+        hasValidRoleSomewhere = true;
+      }
+    } else if (role === 'manager') {
+      if (plat.managerRoleId && member.roles.cache.has(plat.managerRoleId)) {
+        hasValidRoleSomewhere = true;
+      }
+    } else if (role === 'va') {
+      if (plat.vaRoleId && member.roles.cache.has(plat.vaRoleId)) {
+        hasValidRoleSomewhere = true;
+      }
+      // Also accept manager role as a valid role for a VA-level dashboard account (managers can see VA pages)
+      if (plat.managerRoleId && member.roles.cache.has(plat.managerRoleId)) {
+        hasValidRoleSomewhere = true;
+      }
+    }
+  }
+
+  if (!foundInAnyGuild) {
+    return { valid: false, reason: 'User left/was banned from all relevant Discord server(s)' };
+  }
+  if (!hasValidRoleSomewhere) {
+    return { valid: false, reason: 'User no longer has the required Discord role (' + role + ') on any platform' };
+  }
+  return { valid: true };
+}
+
+// Try to DM the user and post a note in admin channels when revocation happens.
+async function notifyRevocation(user, reason) {
+  // DM the user if possible — gives them a chance to contact admin if it's a mistake
+  if (user.discord_id) {
+    try {
+      var u = await discordClient.users.fetch(user.discord_id);
+      await u.send({
+        content: '🔒 **Acces dashboard Shinra revoque**\n\n' +
+          'Ton compte dashboard (**' + user.username + '**) vient d\'etre desactive automatiquement.\n\n' +
+          'Raison : ' + reason + '\n\n' +
+          'Si tu penses que c\'est une erreur, contacte un admin pour reactiver ton acces.'
+      });
+    } catch (e) {
+      // DM failed (user blocked bot or left server) — silent no-op
+    }
+  }
+
+  // Log in the first available alerts channel we have access to
+  try {
+    var platforms = config.getActivePlatforms();
+    for (var i = 0; i < platforms.length; i++) {
+      var ch = await getChannel(platforms[i], 'alerts');
+      if (ch) {
+        await ch.send({
+          content: '🔒 **Revocation automatique** — compte dashboard `' + user.username + '` desactive.\n' +
+            'Raison : ' + reason + '\n' +
+            'Role : ' + user.role + ' · Plateforme : ' + user.platform
+        });
+        break; // Only post in one channel to avoid noise
+      }
+    }
+  } catch (e) {}
+}
+
+module.exports = { initCronJobs: initCronJobs, sendDailySummaryForPlatform: sendDailySummaryForPlatform, sendVaDM: sendVaDM, sweepDashboardUsers: sweepDashboardUsers };
