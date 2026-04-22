@@ -58,6 +58,11 @@ function initCronJobs(client) {
     try { await runForEachPlatform(sendPerformanceDropAlert); } catch (err) { console.error('Perf drop alert failed', err.message); }
   }, { timezone: config.timezone });
 
+  // Per-account performance drop check at 19h (1h after per-VA) — catches shadowbans
+  cron.schedule('0 19 * * *', async function() {
+    try { await runForEachPlatform(sendAccountDropAlert); } catch (err) { console.error('Account drop alert failed', err.message); }
+  }, { timezone: config.timezone });
+
   // Daily sweep of inactive accounts — 01:05 Europe/Paris, low traffic window
   cron.schedule('5 1 * * *', async function() {
     try {
@@ -441,6 +446,36 @@ async function sendPerformanceDropAlert(platform) {
   });
 
   console.log('[' + platform.toUpperCase() + '] Performance drop alert: ' + drops.length + ' VAs');
+}
+
+// Per-account performance drop — detects accounts shadowbanned or losing
+// reach while the VA is still posting normally. Alert goes to #alerts so
+// the manager can review/rotate the account before more content is burnt.
+async function sendAccountDropAlert(platform) {
+  var alertsChannel = await getChannel(platform, 'alerts');
+  if (!alertsChannel) return;
+
+  var drops = await db.getAccountPerformanceDrops(0.5, platform);
+  if (drops.length === 0) return;
+
+  var lines = drops.map(function(d) {
+    return '⚠️ **@' + d.username + '** (VA: ' + (d.va_name || '—') + ') — ' +
+      fmt(Number(d.recent_avg)) + ' vues/post (3j) vs ' +
+      fmt(Number(d.baseline_avg)) + ' en moyenne (**' + d.pct_of_baseline + '%**)';
+  });
+
+  // Limit to top 10 worst to avoid spamming the channel
+  var maxLines = Math.min(lines.length, 10);
+  var tail = lines.length > 10 ? '\n\n_...et ' + (lines.length - 10) + ' autre(s) compte(s) en chute._' : '';
+
+  await alertsChannel.send({
+    content: '**📉 Comptes en chute — ' + embeds.getPlatformLabel(platform) + '**\n\n' +
+      'Ces comptes performent a <50% de leur moyenne des 7j precedents (potentiel shadowban) :\n\n' +
+      lines.slice(0, maxLines).join('\n') + tail + '\n\n' +
+      '💡 _Pistes : pause de 24-48h, changer d\'angle/niche, verifier les hashtags, voir si le compte est shadowban sur iseoapp.com._'
+  });
+
+  console.log('[' + platform.toUpperCase() + '] Account drop alert: ' + drops.length + ' accounts');
 }
 
 async function awardDailyPointsForPlatform(platform) {
