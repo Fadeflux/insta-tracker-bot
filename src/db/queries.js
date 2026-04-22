@@ -738,9 +738,9 @@ async function getDashboardUser(username) {
   return result.rows[0] || null;
 }
 
-async function upsertDashboardUser(username, passwordHash, role, platform) {
-  var sql = "INSERT INTO dashboard_users (username, password_hash, role, platform) VALUES ($1, $2, $3, $4) ON CONFLICT (username) DO UPDATE SET password_hash = $2, role = $3, platform = $4 RETURNING *";
-  var result = await pool.query(sql, [username, passwordHash, role || 'va', platform || 'all']);
+async function upsertDashboardUser(username, passwordHash, role, platform, discordId) {
+  var sql = "INSERT INTO dashboard_users (username, password_hash, role, platform, discord_id) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (username) DO UPDATE SET password_hash = $2, role = $3, platform = $4, discord_id = $5 RETURNING *";
+  var result = await pool.query(sql, [username, passwordHash, role || 'va', platform || 'all', discordId || null]);
   return result.rows[0];
 }
 
