@@ -361,6 +361,28 @@ async function getBlockedDmVAs() {
   return result.rows;
 }
 
+// Return per-VA activity status aggregated from posts.
+// Groups by va_discord_id, optionally filtered by platform.
+// For each VA: posts today, posts last 7 days, last post timestamp.
+// NOTE: Uses va_discord_id from posts, which is populated when the VA posts.
+// VAs who have NEVER posted won't appear — but the dashboard endpoint
+// cross-references with the full Discord member list so newcomers still show.
+async function getVaActivityStatus(platform) {
+  var where = platform ? "WHERE p.platform = $1 AND p.va_discord_id IS NOT NULL" : "WHERE p.va_discord_id IS NOT NULL";
+  var params = platform ? [platform] : [];
+  var sql =
+    "SELECT p.va_discord_id, " +
+    "       MAX(p.va_name) AS va_name, " +
+    "       COUNT(*) FILTER (WHERE p.created_at::date = CURRENT_DATE) AS posts_today, " +
+    "       COUNT(*) FILTER (WHERE p.created_at >= NOW() - INTERVAL '7 days') AS posts_7d, " +
+    "       MAX(p.created_at) AS last_post_at " +
+    "FROM posts p " +
+    where + " " +
+    "GROUP BY p.va_discord_id";
+  var result = await pool.query(sql, params);
+  return result.rows;
+}
+
 async function getNuggets(date, platform) {
   var whereClause = platform
     ? "WHERE p.created_at::date = $1 AND p.platform = $2 AND COALESCE(s.views, 0) > 0"
@@ -994,7 +1016,7 @@ module.exports = {
   updatePostPerformance, getSavedBestPosts, getNuggets, getRecommendations,
   getHourlyPerformance, getPostsForCoaching, markCoachingSent,
   getNewPostsReachingThreshold, recordViralNotification,
-  recordDmAttempt, getAllDmStatus, getBlockedDmVAs,
+  recordDmAttempt, getAllDmStatus, getBlockedDmVAs, getVaActivityStatus,
   // Streaks
   updateStreak, getAllStreaks,
   // Alerts
