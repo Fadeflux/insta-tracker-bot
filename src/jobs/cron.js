@@ -585,10 +585,33 @@ async function sendAccountDropAlert(platform) {
   var drops = await db.getAccountPerformanceDrops(0.5, platform);
   if (drops.length === 0) return;
 
+  // Load shadowban candidates (same accounts but with engagement rate analysis)
+  // We match by username to enrich each drop row with a shadowban diagnosis.
+  var shadowbanRows = await db.getShadowbanCandidates(platform);
+  var sbByUsername = {};
+  shadowbanRows.forEach(function(r) { sbByUsername[r.username] = r; });
+
+  // Format each drop with its diagnosis (shadowban / content / mixed)
+  var labelByDiagnosis = {
+    shadowban: '🚨 SHADOWBAN probable',
+    content: '📉 Contenu en baisse',
+    mixed: '⚠️ Mixte',
+    ok: '',
+  };
+
   var lines = drops.map(function(d) {
+    var sb = sbByUsername[d.username];
+    var diagText = '';
+    if (sb) {
+      var score = db.computeShadowbanScore(sb);
+      var lbl = labelByDiagnosis[score.diagnosis] || '';
+      if (lbl) {
+        diagText = ' — **' + lbl + '** (score ' + score.shadowban_score + '/100)';
+      }
+    }
     return '⚠️ **@' + d.username + '** (VA: ' + (d.va_name || '—') + ') — ' +
       fmt(Number(d.recent_avg)) + ' vues/post (3j) vs ' +
-      fmt(Number(d.baseline_avg)) + ' en moyenne (**' + d.pct_of_baseline + '%**)';
+      fmt(Number(d.baseline_avg)) + ' en moyenne (**' + d.pct_of_baseline + '%**)' + diagText;
   });
 
   // Limit to top 10 worst to avoid spamming the channel
@@ -597,9 +620,12 @@ async function sendAccountDropAlert(platform) {
 
   await alertsChannel.send({
     content: '**📉 Comptes en chute — ' + embeds.getPlatformLabel(platform) + '**\n\n' +
-      'Ces comptes performent a <50% de leur moyenne des 7j precedents (potentiel shadowban) :\n\n' +
+      'Ces comptes performent a <50% de leur moyenne des 7j precedents :\n\n' +
       lines.slice(0, maxLines).join('\n') + tail + '\n\n' +
-      '💡 _Pistes : pause de 24-48h, changer d\'angle/niche, verifier les hashtags, voir si le compte est shadowban sur iseoapp.com._'
+      '💡 **Comment lire** :\n' +
+      '🚨 **SHADOWBAN probable** = reach en chute mais engagement rate stable → probleme algo, pas contenu\n' +
+      '📉 **Contenu en baisse** = reach ET engagement rate chutent ensemble → contenu moins bon\n' +
+      '⚠️ **Mixte** = les deux baissent partiellement → a surveiller'
   });
 
   // Group drops by VA so each VA gets a single DM covering all their affected accounts.
@@ -614,22 +640,44 @@ async function sendAccountDropAlert(platform) {
   for (var v = 0; v < vaIds.length; v++) {
     var vaId = vaIds[v];
     var accDrops = dropsByVa[vaId];
+    var hasShadowban = false;
     var accLines = accDrops.map(function(d) {
+      var sb = sbByUsername[d.username];
+      var diagText = '';
+      if (sb) {
+        var score = db.computeShadowbanScore(sb);
+        if (score.diagnosis === 'shadowban') {
+          hasShadowban = true;
+          diagText = ' **[SHADOWBAN probable]**';
+        } else if (score.diagnosis === 'content') {
+          diagText = ' **[Contenu en baisse]**';
+        } else if (score.diagnosis === 'mixed') {
+          diagText = ' **[Signal mixte]**';
+        }
+      }
       return '• **@' + d.username + '** — ' +
         fmt(Number(d.recent_avg)) + ' vues/post (3j) vs ' +
-        fmt(Number(d.baseline_avg)) + ' avant (**' + d.pct_of_baseline + '%**)';
+        fmt(Number(d.baseline_avg)) + ' avant (**' + d.pct_of_baseline + '%**)' + diagText;
     }).join('\n');
 
     var suffix = accDrops.length > 1 ? ' comptes sont' : ' compte est';
+    var conseil = hasShadowban
+      ? '**Potentiel shadowban detecte** : reach en chute mais ton engagement rate reste stable, ce qui indique un probleme cote algo Instagram (pas ton contenu).\n\n' +
+        '💬 **Contacte un manager** pour decider :\n' +
+        '• Pause de 48h minimum sur le(s) compte(s) concerne(s) ?\n' +
+        '• Verifier avec un autre compte si les hashtags passent ?\n' +
+        '• Strategie de relance (moins de hashtags, pas de lien bio...)\n'
+      : 'Le reach ET l\'engagement rate baissent ensemble, ce qui suggere un probleme de contenu plutot qu\'un shadowban.\n\n' +
+        '💬 **Contacte un manager** pour decider :\n' +
+        '• Changement d\'angle / de niche ?\n' +
+        '• Analyse des posts qui marchaient avant ?\n' +
+        '• Rotation vers un autre compte ?\n';
+
     var dmMsg =
-      '⚠️ **Alerte : ' + accDrops.length + (accDrops.length > 1 ? ' de tes' : ' de tes') + ' compte' + (accDrops.length > 1 ? 's' : '') + ' en chute sur ' + embeds.getPlatformLabel(platform) + '**\n\n' +
+      '⚠️ **Alerte : ' + accDrops.length + ' de tes compte' + (accDrops.length > 1 ? 's' : '') + ' en chute sur ' + embeds.getPlatformLabel(platform) + '**\n\n' +
       (accDrops.length > 1 ? 'Ces comptes performent' : 'Ce compte performe') + ' a <50% de leur moyenne des 7 derniers jours :\n\n' +
       accLines + '\n\n' +
-      'C\'est un signal de **potentiel shadowban** ou de chute d\'engagement.\n\n' +
-      '💬 **Contacte un manager rapidement** pour decider quoi faire :\n' +
-      '• Pause de 24-48h sur le compte ?\n' +
-      '• Changement d\'angle / de niche ?\n' +
-      '• Rotation vers un autre compte ?\n\n' +
+      conseil + '\n' +
       'Plus on agit vite, moins on brule de contenu pour rien 💪';
 
     await sendVaDM(vaId, dmMsg);
