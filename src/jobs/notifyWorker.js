@@ -26,26 +26,30 @@ function createNotifyWorker() {
 
       try {
         if (job.name === 'hourly-update') {
-          var VIRAL = parseInt(process.env.VIRAL_VIEWS || '5000');
-          var prevViews = previousStats ? previousStats.views : 0;
-          if (currentStats.views >= VIRAL && prevViews < VIRAL) {
-            var viralEmbed = embeds.viralAlertEmbed(post, currentStats, platform);
-
-            // Send to the correct platform's alerts channel
-            var platConfig = config.platforms[platform];
-            if (platConfig && platConfig.channels.alerts) {
-              try {
-                var alertsChannel = await discordClient.channels.fetch(platConfig.channels.alerts);
-                if (alertsChannel) {
-                  await alertsChannel.send({ embeds: [viralEmbed] });
-                }
-              } catch(e) {
-                logger.warn('Could not send viral alert to ' + platform + ': ' + e.message);
-              }
-            }
-
-            logger.info('[' + platform.toUpperCase() + '] VIRAL ALERT sent for post ' + postId + ' (' + currentStats.views + ' views)');
-          }
+          // NOTE: Viral detection is now handled by the scheduled cron
+          // in src/jobs/cron.js (notifyViralPosts, runs every 10 min).
+          // That system:
+          //   - De-duplicates via the viral_notifications table
+          //   - Posts to the dedicated #viral channel (with #results fallback)
+          //   - DMs the VA personally
+          // We intentionally keep this hourly-update worker wired up in case
+          // we want to add other real-time notifications later (e.g. coaching
+          // triggers, bad performance alerts at the post level). For now it
+          // is a no-op.
+          //
+          // Previous implementation (disabled to avoid duplicate messages in
+          // #alertes-posts every hour):
+          //
+          //   var VIRAL = parseInt(process.env.VIRAL_VIEWS || '5000');
+          //   var prevViews = previousStats ? previousStats.views : 0;
+          //   if (currentStats.views >= VIRAL && prevViews < VIRAL) {
+          //     var viralEmbed = embeds.viralAlertEmbed(post, currentStats, platform);
+          //     var platConfig = config.platforms[platform];
+          //     if (platConfig && platConfig.channels.alerts) {
+          //       var alertsChannel = await discordClient.channels.fetch(platConfig.channels.alerts);
+          //       if (alertsChannel) await alertsChannel.send({ embeds: [viralEmbed] });
+          //     }
+          //   }
         }
       } catch (err) {
         logger.error('Notification failed for post ' + postId, { error: err.message });
