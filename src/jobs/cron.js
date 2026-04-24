@@ -843,4 +843,4 @@ async function notifyRevocation(user, reason) {
   } catch (e) {}
 }
 
-module.exports = { initCronJobs: initCronJobs, sendDailySummaryForPlatform: sendDailySummaryForPlatform, sendVaDM: sendVaDM, sweepDashboardUsers: sweepDashboardUsers };
+module.exports = { initCronJobs: initCronJobs, sendDailySummaryForPlatform: sendDailySummaryForPlatform, sendVaDM: sendVaDM, sweepDashboardUsers: sweepDashboardUsers, runWeeklyCeremony: runWeeklyCeremony };
