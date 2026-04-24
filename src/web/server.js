@@ -767,8 +767,19 @@ function createWebServer() {
   //   - green:  on pace
   app.get('/api/admin/activity-status', checkAuth, checkManagerOrAdmin, async function(req, res) {
     try {
-      var cron = require('../jobs/cron');
-      var client = cron.getDiscordClient ? cron.getDiscordClient() : null;
+      // Try to get the Discord client from any of the modules that hold it.
+      // notifyWorker is always loaded and receives setDiscordClient() at startup.
+      var client = null;
+      try {
+        var notifyW = require('../jobs/notifyWorker');
+        if (notifyW.getDiscordClient) client = notifyW.getDiscordClient();
+      } catch(e) {}
+      if (!client) {
+        try {
+          var cron = require('../jobs/cron');
+          if (cron.getDiscordClient) client = cron.getDiscordClient();
+        } catch(e) {}
+      }
       if (!client) return res.json({ count: 0, users: [], warning: 'Discord client not ready' });
 
       // Optional platform filter (query param). If set, restrict to that single platform.
@@ -779,7 +790,6 @@ function createWebServer() {
       }
 
       // Gather activity rows per platform
-      var platforms = config.getActivePlatforms();
       var activityByIdPlat = {}; // { [platform]: { [discordId]: row } }
       for (var i = 0; i < platforms.length; i++) {
         var p = platforms[i];
@@ -904,9 +914,19 @@ function createWebServer() {
       var out = [];
       var seen = {};
 
-      // Lazy require to get the current Discord client
-      var cron = require('../jobs/cron');
-      var client = cron.getDiscordClient ? cron.getDiscordClient() : null;
+      // Try to get the Discord client from notifyWorker first (always loaded),
+      // fall back to cron if needed.
+      var client = null;
+      try {
+        var notifyW = require('../jobs/notifyWorker');
+        if (notifyW.getDiscordClient) client = notifyW.getDiscordClient();
+      } catch(e) {}
+      if (!client) {
+        try {
+          var cron = require('../jobs/cron');
+          if (cron.getDiscordClient) client = cron.getDiscordClient();
+        } catch(e) {}
+      }
 
       if (client) {
         for (var i = 0; i < platforms.length; i++) {
