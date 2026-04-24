@@ -767,7 +767,6 @@ function createWebServer() {
   //   - green:  on pace
   app.get('/api/admin/activity-status', checkAuth, checkManagerOrAdmin, async function(req, res) {
     try {
-      console.log('[activity-status] Request with platform=' + (req.query.platform || 'ALL') + ' from user=' + req.user);
       // Try to get the Discord client from any of the modules that hold it.
       // notifyWorker is always loaded and receives setDiscordClient() at startup.
       var client = null;
@@ -817,17 +816,13 @@ function createWebServer() {
       for (var j = 0; j < platforms.length; j++) {
         var plat = platforms[j];
         var pc = config.platforms[plat];
-        if (!pc || !pc.guildId || !pc.vaRoleId) {
-          console.log('[activity-status] SKIP platform ' + plat + ' — missing config (guildId=' + (pc ? pc.guildId : 'no pc') + ' vaRoleId=' + (pc ? pc.vaRoleId : 'no pc') + ')');
-          continue;
-        }
+        if (!pc || !pc.guildId || !pc.vaRoleId) continue;
         try {
           var guild = await client.guilds.fetch(pc.guildId);
           await guild.members.fetch();
           var members = guild.members.cache.filter(function(m) {
             return m.roles.cache.has(pc.vaRoleId) && !m.user.bot;
           });
-          console.log('[activity-status] Platform ' + plat + ': ' + members.size + ' VA members found');
           members.forEach(function(m) {
             var id = m.user.id;
             if (seen[id]) {
@@ -891,7 +886,6 @@ function createWebServer() {
         return (a.va_name || '').localeCompare(b.va_name || '');
       });
 
-      console.log('[activity-status] Returning ' + out.length + ' users total');
       res.json({
         count: out.length,
         red: out.filter(function(r){return r.status==='red'}).length,
@@ -899,7 +893,7 @@ function createWebServer() {
         green: out.filter(function(r){return r.status==='green'}).length,
         users: out,
       });
-    } catch(err) { console.error('[activity-status] Error:', err); res.status(500).json({ error: err.message }); }
+    } catch(err) { res.status(500).json({ error: err.message }); }
   });
   app.get('/api/admin/dm-status', checkAuth, checkManagerOrAdmin, async function(req, res) {
     try {
