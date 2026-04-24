@@ -4,6 +4,7 @@ const config = require('../../config');
 const logger = require('../utils/logger');
 const { scrapePost } = require('../scrapers/instagram');
 const { scrapeTweet } = require('../scrapers/twitter');
+const { scrapePost: scrapeThreadsPost } = require('../scrapers/threads');
 const db = require('../db/queries');
 
 var connection = new IORedis(config.redis.url, { maxRetriesPerRequest: null });
@@ -14,6 +15,8 @@ var notifyQueue = new Queue('notify', { connection: connection });
 // Route to the right scraper based on platform
 function scrapeByPlatform(url, platform) {
   if (platform === 'twitter') return scrapeTweet(url);
+  if (platform === 'threads') return scrapeThreadsPost(url);
+  // instagram AND geelark both use the Instagram scraper (geelark posts ARE IG posts)
   return scrapePost(url);
 }
 
