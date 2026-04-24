@@ -62,4 +62,4 @@ function createNotifyWorker() {
   return worker;
 }
 
-module.exports = { setDiscordClient: setDiscordClient, createNotifyWorker: createNotifyWorker };
+module.exports = { setDiscordClient: setDiscordClient, createNotifyWorker: createNotifyWorker, getDiscordClient: function() { return discordClient; } };
