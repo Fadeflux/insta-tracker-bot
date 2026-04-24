@@ -415,7 +415,16 @@ function createWebServer() {
       if (status && status !== 'all') opts.status = status;
       if (req.query.va) opts.vaDiscordId = req.query.va;
       var accounts = await db.listAccountsWithStats(opts);
-      // Enrich with a small derived field: days since last post + health.
+
+      // Load shadowban candidates for this platform (or all) in one go, then
+      // lookup by username during the enrichment loop.
+      var sbByUsername = {};
+      try {
+        var sbRows = await db.getShadowbanCandidates(platform || null);
+        sbRows.forEach(function(r) { sbByUsername[r.username + '|' + r.platform] = r; });
+      } catch (e) { /* non-fatal */ }
+
+      // Enrich with derived fields: days since last post + health + shadowban
       var now = Date.now();
       accounts = accounts.map(function(a) {
         var ref = a.last_post_at || a.last_seen_at;
@@ -424,6 +433,20 @@ function createWebServer() {
         a.health_status = health.health_status;
         a.health_score = health.health_score;
         a.health_reason = health.health_reason;
+        // Shadowban fields (only populated for accounts with a drop candidate)
+        var sb = sbByUsername[a.username + '|' + a.platform];
+        if (sb) {
+          var sbScore = db.computeShadowbanScore(sb);
+          a.shadowban_score = sbScore.shadowban_score;
+          a.shadowban_diagnosis = sbScore.diagnosis;
+          a.views_drop_pct = sbScore.views_drop_pct;
+          a.engagement_drop_pct = sbScore.engagement_drop_pct;
+        } else {
+          a.shadowban_score = 0;
+          a.shadowban_diagnosis = 'ok';
+          a.views_drop_pct = 0;
+          a.engagement_drop_pct = 0;
+        }
         return a;
       });
       res.json({ platform: platform || 'all', status: status, count: accounts.length, accounts: accounts });
