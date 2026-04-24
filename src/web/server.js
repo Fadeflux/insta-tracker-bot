@@ -727,6 +727,40 @@ function createWebServer() {
     } catch(err) { res.status(500).json({ error: err.message }); }
   });
 
+  // Force the weekly ceremony (champion announcement + duel creation) for a platform.
+  app.post('/api/admin/force-duels', checkAuth, checkAdmin, async function(req, res) {
+    try {
+      var cron = require('../jobs/cron');
+      if (typeof cron.runWeeklyCeremony !== 'function') {
+        return res.status(500).json({ error: 'Weekly ceremony function not available' });
+      }
+      var platform = req.body && req.body.platform ? req.body.platform : null;
+      if (!platform) return res.status(400).json({ error: 'Plateforme manquante' });
+      if (!config.platforms[platform] || !config.platforms[platform].guildId) {
+        return res.status(400).json({ error: 'Plateforme invalide ou non configuree: ' + platform });
+      }
+      await cron.runWeeklyCeremony(platform);
+      res.json({ success: true, message: 'Ceremonie forcee pour ' + platform + '. Va voir les canaux #results et #duels.' });
+    } catch(err) { res.status(500).json({ error: err.message }); }
+  });
+
+  // Force the daily summary for a platform (useful for testing or re-sending).
+  app.post('/api/admin/force-summary', checkAuth, checkAdmin, async function(req, res) {
+    try {
+      var cron = require('../jobs/cron');
+      if (typeof cron.sendDailySummaryForPlatform !== 'function') {
+        return res.status(500).json({ error: 'Daily summary function not available' });
+      }
+      var platform = req.body && req.body.platform ? req.body.platform : null;
+      if (!platform) return res.status(400).json({ error: 'Plateforme manquante' });
+      if (!config.platforms[platform] || !config.platforms[platform].guildId) {
+        return res.status(400).json({ error: 'Plateforme invalide ou non configuree: ' + platform });
+      }
+      await cron.sendDailySummaryForPlatform(platform);
+      res.json({ success: true, message: 'Resume du jour envoye pour ' + platform + '.' });
+    } catch(err) { res.status(500).json({ error: err.message }); }
+  });
+
   // ==================== STATIC PAGES ====================
 
   app.get('/', function(req, res) {
