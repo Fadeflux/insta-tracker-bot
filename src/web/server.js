@@ -727,6 +727,126 @@ function createWebServer() {
     } catch(err) { res.status(500).json({ error: err.message }); }
   });
 
+  // VA activity status: cross-reference current Discord VA members with their
+  // posting activity (posts today, posts 7d, last post date) to flag those
+  // who are inactive or under-posting. Three severity levels:
+  //   - red:    no post for 2+ days, OR < 10 posts in 7 days, OR never posted
+  //   - orange: 0 posts today past 14:00 Paris, OR under-posting today
+  //   - green:  on pace
+  app.get('/api/admin/activity-status', checkAuth, checkAdmin, async function(req, res) {
+    try {
+      var cron = require('../jobs/cron');
+      var client = cron.getDiscordClient ? cron.getDiscordClient() : null;
+      if (!client) return res.json({ count: 0, users: [], warning: 'Discord client not ready' });
+
+      // Gather activity rows per platform
+      var platforms = config.getActivePlatforms();
+      var activityByIdPlat = {}; // { [platform]: { [discordId]: row } }
+      for (var i = 0; i < platforms.length; i++) {
+        var p = platforms[i];
+        activityByIdPlat[p] = {};
+        try {
+          var rows = await db.getVaActivityStatus(p);
+          rows.forEach(function(r) { activityByIdPlat[p][r.va_discord_id] = r; });
+        } catch (e) {
+          // continue
+        }
+      }
+
+      // Paris hour for orange-tier logic
+      var parisHour;
+      try {
+        var parts = new Intl.DateTimeFormat('en-US', { timeZone: 'Europe/Paris', hour: 'numeric', hour12: false }).formatToParts(new Date());
+        var hpart = parts.find(function(p){return p.type==='hour'});
+        parisHour = hpart ? parseInt(hpart.value, 10) : new Date().getUTCHours();
+      } catch (e) { parisHour = new Date().getUTCHours(); }
+
+      var seen = {};
+      var out = [];
+
+      for (var j = 0; j < platforms.length; j++) {
+        var plat = platforms[j];
+        var pc = config.platforms[plat];
+        if (!pc || !pc.guildId || !pc.vaRoleId) continue;
+        try {
+          var guild = await client.guilds.fetch(pc.guildId);
+          await guild.members.fetch();
+          var members = guild.members.cache.filter(function(m) {
+            return m.roles.cache.has(pc.vaRoleId) && !m.user.bot;
+          });
+          members.forEach(function(m) {
+            var id = m.user.id;
+            if (seen[id]) {
+              seen[id].platforms.push(plat);
+              var extra = activityByIdPlat[plat][id];
+              if (extra) {
+                seen[id].posts_today += Number(extra.posts_today) || 0;
+                seen[id].posts_7d += Number(extra.posts_7d) || 0;
+                if (extra.last_post_at && (!seen[id].last_post_at || new Date(extra.last_post_at) > new Date(seen[id].last_post_at))) {
+                  seen[id].last_post_at = extra.last_post_at;
+                }
+              }
+              return;
+            }
+            var act = activityByIdPlat[plat][id] || { posts_today: 0, posts_7d: 0, last_post_at: null };
+            var row = {
+              discord_id: id,
+              va_name: m.displayName || m.user.username,
+              platforms: [plat],
+              posts_today: Number(act.posts_today) || 0,
+              posts_7d: Number(act.posts_7d) || 0,
+              last_post_at: act.last_post_at,
+            };
+            seen[id] = row;
+            out.push(row);
+          });
+        } catch (e) {
+          // skip platform
+        }
+      }
+
+      var nowMs = Date.now();
+      out.forEach(function(r) {
+        var daysSinceLast = r.last_post_at ? Math.floor((nowMs - new Date(r.last_post_at).getTime()) / (1000*60*60*24)) : null;
+        r.days_since_last = daysSinceLast;
+        var status, label, reason;
+        if (daysSinceLast === null) {
+          status = 'red'; label = 'URGENT'; reason = "n'a jamais poste";
+        } else if (daysSinceLast >= 2) {
+          status = 'red'; label = 'URGENT'; reason = 'pas poste depuis ' + daysSinceLast + 'j';
+        } else if (r.posts_7d < 10) {
+          status = 'red'; label = 'URGENT'; reason = 'seulement ' + r.posts_7d + ' posts/7j (objectif: 42)';
+        } else if (r.posts_today === 0 && parisHour >= 14) {
+          status = 'orange'; label = 'En retard'; reason = '0 post aujourd\'hui apres 14h';
+        } else if (r.posts_today === 0) {
+          status = 'orange'; label = 'A surveiller'; reason = '0 post aujourd\'hui (encore tot)';
+        } else if (r.posts_today < 6) {
+          status = 'orange'; label = 'Sous objectif'; reason = r.posts_today + '/6 posts aujourd\'hui';
+        } else {
+          status = 'green'; label = 'OK'; reason = 'objectif atteint';
+        }
+        r.status = status;
+        r.label = label;
+        r.reason = reason;
+      });
+
+      var order = { red: 0, orange: 1, green: 2 };
+      out.sort(function(a, b) {
+        if (order[a.status] !== order[b.status]) return order[a.status] - order[b.status];
+        if (a.posts_today !== b.posts_today) return a.posts_today - b.posts_today;
+        return (a.va_name || '').localeCompare(b.va_name || '');
+      });
+
+      res.json({
+        count: out.length,
+        red: out.filter(function(r){return r.status==='red'}).length,
+        orange: out.filter(function(r){return r.status==='orange'}).length,
+        green: out.filter(function(r){return r.status==='green'}).length,
+        users: out,
+      });
+    } catch(err) { res.status(500).json({ error: err.message }); }
+  });
+
   // Return DM delivery status for all VAs (cross-referenced with current Discord members).
   // Each row is one VA discord_id with their current DM health.
   app.get('/api/admin/dm-status', checkAuth, checkAdmin, async function(req, res) {
