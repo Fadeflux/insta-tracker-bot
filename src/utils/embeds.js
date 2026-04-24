@@ -3,6 +3,7 @@ var { EmbedBuilder } = require('discord.js');
 var COLORS = {
   instagram: 0xe1306c,
   twitter: 0x1da1f2,
+  threads: 0x101010,
   success: 0x2ecc71,
   warning: 0xf39c12,
   error: 0xe74c3c,
@@ -17,18 +18,21 @@ var COLORS = {
 function getPlatformColor(platform) {
   if (platform === 'twitter') return COLORS.twitter;
   if (platform === 'geelark') return 0x00c853;
+  if (platform === 'threads') return COLORS.threads;
   return COLORS.instagram;
 }
 
 function getPlatformEmoji(platform) {
   if (platform === 'twitter') return '🐦';
   if (platform === 'geelark') return '📱';
+  if (platform === 'threads') return '🧵';
   return '📸';
 }
 
 function getPlatformLabel(platform) {
   if (platform === 'twitter') return 'Twitter/X';
   if (platform === 'geelark') return 'Geelark Insta';
+  if (platform === 'threads') return 'Threads';
   return 'Instagram';
 }
 
