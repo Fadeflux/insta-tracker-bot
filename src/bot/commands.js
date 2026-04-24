@@ -3,7 +3,7 @@ const config = require('../../config');
 const db = require('../db/queries');
 const embeds = require('../utils/embeds');
 const { getQueueStats } = require('../jobs/scrapeQueue');
-const { sendDailySummaryForPlatform } = require('../jobs/cron');
+const { sendDailySummaryForPlatform, runWeeklyCeremony } = require('../jobs/cron');
 const logger = require('../utils/logger');
 
 var commands = [
@@ -15,6 +15,7 @@ var commands = [
     .addStringOption(function(opt) { return opt.setName('date').setDescription('Date (YYYY-MM-DD)').setRequired(false); }),
   new SlashCommandBuilder().setName('status').setDescription('Statut du bot et des queues (managers only)'),
   new SlashCommandBuilder().setName('force-summary').setDescription('Forcer le resume de fin de journee (managers only)'),
+  new SlashCommandBuilder().setName('force-duels').setDescription('Forcer la ceremonie hebdo et creer les duels de la semaine (admin only)'),
   new SlashCommandBuilder().setName('permission').setDescription('Gerer les permissions (admin only)')
     .addSubcommand(function(sub) {
       return sub.setName('add').setDescription('Ajouter une permission')
@@ -63,6 +64,7 @@ async function handleCommand(interaction) {
     if (commandName === 'export') return await handleExport(interaction);
     if (commandName === 'status') return await handleStatus(interaction);
     if (commandName === 'force-summary') return await handleForceSummary(interaction);
+    if (commandName === 'force-duels') return await handleForceDuels(interaction);
     if (commandName === 'permission') return await handlePermission(interaction);
     if (commandName === 'streaks') return await handleStreaks(interaction);
     if (commandName === 'points') return await handlePoints(interaction);
@@ -139,6 +141,26 @@ async function handleForceSummary(interaction) {
   var platform = getPlatform(interaction);
   await sendDailySummaryForPlatform(platform);
   await interaction.editReply({ content: 'Resume de fin de journee envoye pour ' + platform + '.' });
+}
+
+async function handleForceDuels(interaction) {
+  if (!isAdminUser(interaction)) return interaction.reply({ content: 'Reserve aux admins.', ephemeral: true });
+  await interaction.deferReply({ ephemeral: true });
+  try {
+    var platform = getPlatform(interaction);
+    await runWeeklyCeremony(platform);
+    await interaction.editReply({
+      content: '✅ Ceremonie forcee pour **' + platform + '**.\n\n' +
+        'Ce qui a ete declenche :\n' +
+        '1. Annonce du champion de la semaine (si des points ont ete accumules)\n' +
+        '2. Resolution des duels de la semaine precedente (si il y en avait)\n' +
+        '3. Creation des duels pour cette semaine (dans #duels)\n\n' +
+        '_Verifie les canaux #results et #duels pour voir les resultats._'
+    });
+  } catch (err) {
+    logger.error('force-duels failed: ' + err.message);
+    await interaction.editReply({ content: '❌ Erreur: ' + err.message });
+  }
 }
 
 async function handlePermission(interaction) {
