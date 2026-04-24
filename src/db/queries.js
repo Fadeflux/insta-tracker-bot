@@ -361,7 +361,135 @@ async function getBlockedDmVAs() {
   return result.rows;
 }
 
-// Return per-VA activity status aggregated from posts.
+// Shadowban-specific detection. Unlike a plain "views dropped" alert, this
+// cross-references two signals to distinguish:
+//   - SHADOWBAN: reach collapsed BUT engagement rate stayed stable
+//     (the few people who still see it still engage normally) → platform
+//     issue, not a content issue.
+//   - BAD CONTENT: both reach AND engagement rate dropped together → the
+//     recent content is less good, not a shadowban.
+//   - MIXED: some drop in both but less severe → could be either, watch.
+//
+// Returns one row per account with:
+//   - views_ratio: recent_avg_views / baseline_avg_views (0-1, less = worse)
+//   - engagement_ratio: recent_engagement_rate / baseline_engagement_rate
+//   - shadowban_score: 0-100 (higher = more likely shadowban)
+//   - diagnosis: 'shadowban' | 'content' | 'mixed' | 'ok'
+async function getShadowbanCandidates(platform) {
+  var platformFilter = platform ? "AND a.platform = '" + platform + "'" : "";
+
+  var sql =
+    "WITH recent AS (" +
+    "  SELECT p.account_id, " +
+    "         AVG(COALESCE(s.views, 0))::numeric AS avg_views, " +
+    "         AVG(" +
+    "           CASE WHEN COALESCE(s.views, 0) > 0 " +
+    "                THEN (COALESCE(s.likes, 0) + COALESCE(s.comments, 0))::numeric / s.views " +
+    "                ELSE 0 END" +
+    "         )::numeric AS avg_engagement, " +
+    "         COUNT(*)::int AS n_posts " +
+    "  FROM posts p " +
+    "  LEFT JOIN LATERAL (" +
+    "    SELECT views, likes, comments FROM snapshots sn " +
+    "    WHERE sn.post_id = p.id AND COALESCE(sn.error, '') <> 'coaching_sent' " +
+    "    ORDER BY sn.scraped_at DESC LIMIT 1" +
+    "  ) s ON true " +
+    "  WHERE p.account_id IS NOT NULL " +
+    "    AND p.created_at >= NOW() - INTERVAL '3 days' " +
+    "  GROUP BY p.account_id " +
+    "  HAVING COUNT(*) >= 1 AND AVG(COALESCE(s.views, 0)) > 0" +
+    "), " +
+    "baseline AS (" +
+    "  SELECT p.account_id, " +
+    "         AVG(COALESCE(s.views, 0))::numeric AS avg_views, " +
+    "         AVG(" +
+    "           CASE WHEN COALESCE(s.views, 0) > 0 " +
+    "                THEN (COALESCE(s.likes, 0) + COALESCE(s.comments, 0))::numeric / s.views " +
+    "                ELSE 0 END" +
+    "         )::numeric AS avg_engagement, " +
+    "         COUNT(*)::int AS n_posts " +
+    "  FROM posts p " +
+    "  LEFT JOIN LATERAL (" +
+    "    SELECT views, likes, comments FROM snapshots sn " +
+    "    WHERE sn.post_id = p.id AND COALESCE(sn.error, '') <> 'coaching_sent' " +
+    "    ORDER BY sn.scraped_at DESC LIMIT 1" +
+    "  ) s ON true " +
+    "  WHERE p.account_id IS NOT NULL " +
+    "    AND p.created_at >= NOW() - INTERVAL '10 days' " +
+    "    AND p.created_at < NOW() - INTERVAL '3 days' " +
+    "  GROUP BY p.account_id " +
+    "  HAVING COUNT(*) >= 3 AND AVG(COALESCE(s.views, 0)) > 0" +
+    ") " +
+    "SELECT a.id, a.username, a.platform, a.va_discord_id, a.va_name, " +
+    "       recent.avg_views AS recent_avg_views, " +
+    "       baseline.avg_views AS baseline_avg_views, " +
+    "       recent.avg_engagement AS recent_engagement, " +
+    "       baseline.avg_engagement AS baseline_engagement, " +
+    "       recent.n_posts AS recent_posts, " +
+    "       baseline.n_posts AS baseline_posts, " +
+    "       (recent.avg_views / baseline.avg_views)::numeric AS views_ratio, " +
+    "       CASE WHEN baseline.avg_engagement > 0 " +
+    "            THEN (recent.avg_engagement / baseline.avg_engagement)::numeric " +
+    "            ELSE 1 END AS engagement_ratio " +
+    "FROM accounts a " +
+    "JOIN recent ON recent.account_id = a.id " +
+    "JOIN baseline ON baseline.account_id = a.id " +
+    "WHERE a.status = 'active' " + platformFilter + " " +
+    "  AND (recent.avg_views / baseline.avg_views) < 0.7 " + // at least 30% reach drop to be a candidate
+    "ORDER BY (recent.avg_views / baseline.avg_views) ASC";
+
+  var result = await pool.query(sql);
+  return result.rows;
+}
+
+// Compute a shadowban likelihood score (0-100) and diagnosis for a candidate row.
+// This is a pure function — easy to reason about and easy to tweak thresholds.
+//
+// Reasoning:
+//   - Big views drop + stable engagement   → STRONG shadowban signal
+//   - Big views drop + big engagement drop → BAD CONTENT signal
+//   - Small drops on both                   → MIXED (watch)
+function computeShadowbanScore(row) {
+  var vr = Number(row.views_ratio) || 0;         // e.g. 0.30 = views at 30% of normal
+  var er = Number(row.engagement_ratio) || 1;     // e.g. 1.05 = engagement slightly up
+  var viewsDropPct = 1 - vr;                       // 0.70 = 70% drop
+  var engagementDropPct = Math.max(0, 1 - er);     // 0 if engagement UP or stable
+
+  // Shadowban signature: big views drop, small/no engagement drop
+  // Score formula: weighted by how "pure" the reach-only drop is
+  var gap = viewsDropPct - engagementDropPct;
+  // gap > 0 means reach dropped more than engagement → shadowban-like
+  // gap <= 0 means engagement dropped as much or more → content issue
+
+  var score = 0;
+  var diagnosis = 'ok';
+
+  if (viewsDropPct < 0.3) {
+    diagnosis = 'ok';
+    score = 0;
+  } else if (gap >= 0.3 && er >= 0.85) {
+    // Classic shadowban pattern: reach collapsed, engagement rate stable
+    diagnosis = 'shadowban';
+    score = Math.min(100, Math.round(viewsDropPct * 100 + gap * 30));
+  } else if (gap < 0.1 && engagementDropPct >= 0.3) {
+    // Both dropped together → content problem
+    diagnosis = 'content';
+    score = Math.round(viewsDropPct * 40); // lower score (not really shadowban)
+  } else {
+    // Somewhere in between
+    diagnosis = 'mixed';
+    score = Math.round(viewsDropPct * 60 + gap * 20);
+  }
+
+  return {
+    shadowban_score: Math.max(0, Math.min(100, score)),
+    diagnosis: diagnosis,
+    views_drop_pct: Math.round(viewsDropPct * 100),
+    engagement_drop_pct: Math.round(engagementDropPct * 100),
+  };
+}
+
+
 // Groups by va_discord_id, optionally filtered by platform.
 // For each VA: posts today, posts last 7 days, last post timestamp.
 // NOTE: Uses va_discord_id from posts, which is populated when the VA posts.
@@ -1017,6 +1145,7 @@ module.exports = {
   getHourlyPerformance, getPostsForCoaching, markCoachingSent,
   getNewPostsReachingThreshold, recordViralNotification,
   recordDmAttempt, getAllDmStatus, getBlockedDmVAs, getVaActivityStatus,
+  getShadowbanCandidates, computeShadowbanScore,
   // Streaks
   updateStreak, getAllStreaks,
   // Alerts
