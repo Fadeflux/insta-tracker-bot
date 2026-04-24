@@ -275,13 +275,40 @@ DO $$ BEGIN
   END IF;
 END $$;
 CREATE INDEX IF NOT EXISTS idx_dashboard_users_status ON dashboard_users(status);
+
+-- === V7: viral post notifications (tracks which posts we've already congratulated) ===
+CREATE TABLE IF NOT EXISTS viral_notifications (
+  id             SERIAL PRIMARY KEY,
+  post_id        INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+  va_discord_id  VARCHAR(32) NOT NULL,
+  threshold      INTEGER NOT NULL,
+  views_at_notif BIGINT NOT NULL,
+  notified_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (post_id, threshold)
+);
+CREATE INDEX IF NOT EXISTS idx_viral_notif_post ON viral_notifications(post_id);
+CREATE INDEX IF NOT EXISTS idx_viral_notif_va ON viral_notifications(va_discord_id);
+
+-- === V8: track DM delivery status per VA ===
+-- Updated each time sendVaDM() is called. Lets admins see at a glance who
+-- has their Discord DMs enabled (and who needs reminding).
+CREATE TABLE IF NOT EXISTS va_dm_status (
+  discord_id      VARCHAR(32) PRIMARY KEY,
+  va_name         VARCHAR(255),
+  last_ok_at      TIMESTAMPTZ,
+  last_fail_at    TIMESTAMPTZ,
+  last_fail_reason TEXT,
+  total_ok        INTEGER NOT NULL DEFAULT 0,
+  total_fail      INTEGER NOT NULL DEFAULT 0,
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 `;
 
 async function initDb() {
   try {
     await pool.query(SCHEMA);
     await pool.query(MIGRATIONS);
-    logger.info('Database schema initialized (v6 auto-revocation + gamification + per-account tracking)');
+    logger.info('Database schema initialized (v7 viral notifications)');
   } catch (err) {
     logger.error('Database init failed', { error: err.message });
     throw err;
