@@ -2,10 +2,12 @@ const config = require('../../config');
 const logger = require('../utils/logger');
 const { isInstagramPostUrl, extractInstagramUrls, extractPostId, normalizeUrl } = require('../utils/instagram');
 const { isTwitterUrl, extractTwitterUrls, extractTweetId, normalizeTwitterUrl, extractTwitterUsername } = require('../utils/twitter');
+const { extractThreadsUrls, extractThreadsPostId, normalizeThreadsUrl, extractThreadsUsername } = require('../utils/threads');
 const db = require('../db/queries');
 const { scheduleInitialScrape, notifyQueue } = require('../jobs/scrapeQueue');
 const { scrapePost } = require('../scrapers/instagram');
 const { scrapeTweet } = require('../scrapers/twitter');
+const { scrapePost: scrapeThreadsPost } = require('../scrapers/threads');
 
 async function handleMessage(message) {
   if (message.author.bot) return;
@@ -27,6 +29,8 @@ async function handleMessage(message) {
     await handleTwitterMessage(message, platConfig);
   } else if (platform === 'geelark') {
     await handleInstagramMessage(message, platConfig, 'geelark');
+  } else if (platform === 'threads') {
+    await handleThreadsMessage(message, platConfig);
   }
 }
 
@@ -200,6 +204,93 @@ async function handleTwitterMessage(message, platConfig) {
     })(post, message.author.id, vaName, urlUsername);
 
     await scheduleInitialScrape(post.id, url, 'twitter');
+  }
+
+  try { await message.delete(); } catch (err) { logger.warn('Could not delete message: ' + err.message); }
+}
+
+async function handleThreadsMessage(message, platConfig) {
+  var urls = extractThreadsUrls(message.content);
+
+  if (urls.length === 0) {
+    try {
+      await message.delete();
+      var reply = await message.channel.send({ content: '<@' + message.author.id + '> Ce canal est reserve aux liens Threads. Ton message a ete supprime.' });
+      setTimeout(function() { reply.delete().catch(function() {}); }, 10000);
+    } catch (e) {}
+    return;
+  }
+
+  for (var i = 0; i < urls.length; i++) {
+    var rawUrl = urls[i];
+    var url = normalizeThreadsUrl(rawUrl);
+    var postCode = extractThreadsPostId(rawUrl);
+
+    if (!url || !postCode) { logger.warn('Invalid Threads URL skipped: ' + rawUrl); continue; }
+
+    // Use post code as ig_post_id (shared column), prefixed to avoid collisions
+    var postKey = 'th_' + postCode;
+    var existing = await db.getPostByIgId(postKey);
+    if (existing) {
+      try {
+        var reply2 = await message.channel.send({ content: '<@' + message.author.id + '> Ce post Threads a deja ete enregistre (par ' + existing.va_name + ').' });
+        setTimeout(function() { reply2.delete().catch(function() {}); }, 10000);
+      } catch (e) {}
+      continue;
+    }
+
+    var caption = extractCaption(message.content, rawUrl);
+    var vaName = (message.member && message.member.displayName) || message.author.username;
+
+    // Threads: username is usually in the URL, link the account up-front.
+    var urlUsername = extractThreadsUsername(rawUrl);
+    var accountRow = null;
+    if (urlUsername) {
+      try {
+        accountRow = await db.upsertAccount(urlUsername, 'threads', message.author.id, vaName);
+      } catch (e) {
+        logger.warn('[Threads] upsertAccount failed: ' + e.message);
+      }
+    }
+
+    var post = await db.insertPost({
+      igPostId: postKey,
+      url: url,
+      vaDiscordId: message.author.id,
+      vaName: vaName,
+      caption: caption,
+      platform: 'threads',
+      guildId: message.guild.id,
+      accountId: accountRow ? accountRow.id : null,
+      accountUsername: accountRow ? accountRow.username : urlUsername,
+    });
+
+    if (!post) { logger.warn('Post insert returned null: ' + postKey); continue; }
+    logger.info('[Threads] New post registered: ' + postCode + ' by ' + post.va_name + (urlUsername ? ' on @' + urlUsername : ''));
+
+    try {
+      var reply3 = await message.channel.send({ content: 'Post Threads de <@' + message.author.id + '> enregistre ! Tracking actif jusqu\'a 23h59.' });
+      setTimeout(function() { reply3.delete().catch(function() {}); }, 10000);
+    } catch (e) {}
+
+    // Scrape in background. Similar pattern as Twitter — allow scraper-extracted
+    // username to take priority if different from URL.
+    (function(postRef, vaId, vaNm, alreadyLinked) {
+      scrapeThreadsPost(url).then(function(stats) {
+        return db.insertSnapshot(postRef.id, stats).then(function() {
+          if (!alreadyLinked || (stats.username && alreadyLinked && stats.username !== alreadyLinked)) {
+            return linkAccountIfAny(postRef, stats, 'threads', vaId, vaNm);
+          }
+        }).then(function() {
+          return notifyQueue.add('new-post', { postId: postRef.id, currentStats: stats, previousStats: null, platform: 'threads' });
+        });
+      }).catch(function(err) {
+        logger.error('[Threads] Initial scrape failed for ' + postCode, { error: err.message });
+        db.insertSnapshot(postRef.id, { views: 0, likes: 0, comments: 0, shares: 0, error: err.message }).catch(function() {});
+      });
+    })(post, message.author.id, vaName, urlUsername);
+
+    await scheduleInitialScrape(post.id, url, 'threads');
   }
 
   try { await message.delete(); } catch (err) { logger.warn('Could not delete message: ' + err.message); }
