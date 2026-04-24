@@ -727,6 +727,89 @@ function createWebServer() {
     } catch(err) { res.status(500).json({ error: err.message }); }
   });
 
+  // Return DM delivery status for all VAs (cross-referenced with current Discord members).
+  // Each row is one VA discord_id with their current DM health.
+  app.get('/api/admin/dm-status', checkAuth, checkAdmin, async function(req, res) {
+    try {
+      var dbRows = await db.getAllDmStatus();
+      var byId = {};
+      dbRows.forEach(function(r) { byId[r.discord_id] = r; });
+
+      // Cross-reference with current Discord members (per platform)
+      // so that VAs who never received any DM still show up as "never tested".
+      var platforms = config.getActivePlatforms();
+      var out = [];
+      var seen = {};
+
+      // Lazy require to get the current Discord client
+      var cron = require('../jobs/cron');
+      var client = cron.getDiscordClient ? cron.getDiscordClient() : null;
+
+      if (client) {
+        for (var i = 0; i < platforms.length; i++) {
+          var p = platforms[i];
+          var pc = config.platforms[p];
+          if (!pc || !pc.guildId || !pc.vaRoleId) continue;
+          try {
+            var guild = await client.guilds.fetch(pc.guildId);
+            await guild.members.fetch();
+            var members = guild.members.cache.filter(function(m) {
+              return m.roles.cache.has(pc.vaRoleId) && !m.user.bot;
+            });
+            members.forEach(function(m) {
+              var id = m.user.id;
+              if (seen[id]) {
+                // Already added from another platform — just append this platform
+                seen[id].platforms.push(p);
+                return;
+              }
+              var rec = byId[id];
+              var status, label;
+              if (!rec || (!rec.last_ok_at && !rec.last_fail_at)) {
+                status = 'unknown'; label = 'Jamais teste';
+              } else if (rec.last_ok_at && (!rec.last_fail_at || new Date(rec.last_ok_at) >= new Date(rec.last_fail_at))) {
+                status = 'ok'; label = 'OK';
+              } else {
+                status = 'blocked'; label = 'DM bloques';
+              }
+              var row = {
+                discord_id: id,
+                va_name: m.displayName || m.user.username,
+                platforms: [p],
+                status: status,
+                label: label,
+                last_ok_at: rec ? rec.last_ok_at : null,
+                last_fail_at: rec ? rec.last_fail_at : null,
+                last_fail_reason: rec ? rec.last_fail_reason : null,
+                total_ok: rec ? rec.total_ok : 0,
+                total_fail: rec ? rec.total_fail : 0,
+              };
+              seen[id] = row;
+              out.push(row);
+            });
+          } catch (e) {
+            // Skip platform if we can't fetch
+          }
+        }
+      }
+
+      // Sort: blocked first (action needed), then unknown, then ok
+      var order = { blocked: 0, unknown: 1, ok: 2 };
+      out.sort(function(a, b) {
+        if (order[a.status] !== order[b.status]) return order[a.status] - order[b.status];
+        return (a.va_name || '').localeCompare(b.va_name || '');
+      });
+
+      res.json({
+        count: out.length,
+        ok: out.filter(function(r){return r.status==='ok'}).length,
+        blocked: out.filter(function(r){return r.status==='blocked'}).length,
+        unknown: out.filter(function(r){return r.status==='unknown'}).length,
+        users: out,
+      });
+    } catch(err) { res.status(500).json({ error: err.message }); }
+  });
+
   // Force the weekly ceremony (champion announcement + duel creation) for a platform.
   app.post('/api/admin/force-duels', checkAuth, checkAdmin, async function(req, res) {
     try {
