@@ -308,6 +308,59 @@ async function recordViralNotification(postId, vaDiscordId, threshold, viewsAtNo
   return result.rows[0] || null;
 }
 
+// Record the result of a DM attempt to a VA (success or failure).
+// Updates the va_dm_status row for that VA — no error if row doesn't exist.
+async function recordDmAttempt(discordId, vaName, success, failReason) {
+  if (!discordId) return;
+  try {
+    if (success) {
+      await pool.query(
+        "INSERT INTO va_dm_status (discord_id, va_name, last_ok_at, total_ok, updated_at) " +
+        "VALUES ($1, $2, NOW(), 1, NOW()) " +
+        "ON CONFLICT (discord_id) DO UPDATE SET " +
+        "  va_name = COALESCE(EXCLUDED.va_name, va_dm_status.va_name), " +
+        "  last_ok_at = NOW(), total_ok = va_dm_status.total_ok + 1, updated_at = NOW()",
+        [discordId, vaName || null]
+      );
+    } else {
+      await pool.query(
+        "INSERT INTO va_dm_status (discord_id, va_name, last_fail_at, last_fail_reason, total_fail, updated_at) " +
+        "VALUES ($1, $2, NOW(), $3, 1, NOW()) " +
+        "ON CONFLICT (discord_id) DO UPDATE SET " +
+        "  va_name = COALESCE(EXCLUDED.va_name, va_dm_status.va_name), " +
+        "  last_fail_at = NOW(), last_fail_reason = $3, " +
+        "  total_fail = va_dm_status.total_fail + 1, updated_at = NOW()",
+        [discordId, vaName || null, failReason ? failReason.substring(0, 500) : 'unknown']
+      );
+    }
+  } catch (e) {
+    // Don't throw — DM tracking failures shouldn't break the calling code
+    logger.warn('Failed to record DM attempt: ' + e.message);
+  }
+}
+
+// Return all DM status rows for admin dashboard display.
+async function getAllDmStatus() {
+  var result = await pool.query(
+    "SELECT discord_id, va_name, last_ok_at, last_fail_at, last_fail_reason, total_ok, total_fail, updated_at " +
+    "FROM va_dm_status ORDER BY updated_at DESC"
+  );
+  return result.rows;
+}
+
+// Return only VAs whose most recent DM attempt failed (i.e. currently blocked).
+// Used by the daily digest cron to alert admins in #alerts.
+async function getBlockedDmVAs() {
+  var result = await pool.query(
+    "SELECT discord_id, va_name, last_ok_at, last_fail_at, last_fail_reason, total_ok, total_fail " +
+    "FROM va_dm_status " +
+    "WHERE last_fail_at IS NOT NULL " +
+    "  AND (last_ok_at IS NULL OR last_fail_at > last_ok_at) " +
+    "ORDER BY last_fail_at DESC"
+  );
+  return result.rows;
+}
+
 async function getNuggets(date, platform) {
   var whereClause = platform
     ? "WHERE p.created_at::date = $1 AND p.platform = $2 AND COALESCE(s.views, 0) > 0"
@@ -941,6 +994,7 @@ module.exports = {
   updatePostPerformance, getSavedBestPosts, getNuggets, getRecommendations,
   getHourlyPerformance, getPostsForCoaching, markCoachingSent,
   getNewPostsReachingThreshold, recordViralNotification,
+  recordDmAttempt, getAllDmStatus, getBlockedDmVAs,
   // Streaks
   updateStreak, getAllStreaks,
   // Alerts
