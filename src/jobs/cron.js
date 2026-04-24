@@ -69,6 +69,12 @@ function initCronJobs(client) {
     try { await runForEachPlatform(sendAccountDropAlert); } catch (err) { console.error('Account drop alert failed', err.message); }
   }, { timezone: config.timezone });
 
+  // Daily DM-blocked digest at 09h00 Europe/Paris
+  // Alerts admins about VAs whose DMs are currently blocked (so they can nag them to activate).
+  cron.schedule('0 9 * * *', async function() {
+    try { await runForEachPlatform(sendDmBlockedDigest); } catch (err) { console.error('DM blocked digest failed', err.message); }
+  }, { timezone: config.timezone });
+
   // Daily sweep of inactive accounts — 01:05 Europe/Paris, low traffic window
   cron.schedule('5 1 * * *', async function() {
     try {
@@ -632,6 +638,61 @@ async function sendAccountDropAlert(platform) {
   console.log('[' + platform.toUpperCase() + '] Account drop alert: ' + drops.length + ' accounts across ' + vaIds.length + ' VA(s) (channel + DM)');
 }
 
+// Send a digest of VAs whose DMs are currently blocked, so admins can
+// nag them to re-enable DMs. Runs once per day at 09h Paris.
+// Only alerts if there is at least 1 blocked VA on the platform.
+async function sendDmBlockedDigest(platform) {
+  try {
+    var alertsChannel = await getChannel(platform, 'alerts');
+    if (!alertsChannel) return;
+
+    var blocked = await db.getBlockedDmVAs();
+    if (!blocked || blocked.length === 0) return;
+
+    // We only want to mention VAs who are CURRENTLY on this platform (have the VA role).
+    // That way, an admin of platform X doesn't see a blocked VA from platform Y.
+    var platConfig = config.platforms[platform];
+    if (!platConfig || !platConfig.guildId || !platConfig.vaRoleId) return;
+
+    var platVaIds = {};
+    try {
+      var guild = await discordClient.guilds.fetch(platConfig.guildId);
+      await guild.members.fetch();
+      guild.members.cache.forEach(function(m) {
+        if (m.roles.cache.has(platConfig.vaRoleId) && !m.user.bot) {
+          platVaIds[m.user.id] = m.displayName || m.user.username;
+        }
+      });
+    } catch (e) {
+      console.log('[DM Digest] Could not fetch guild members for ' + platform + ': ' + e.message);
+      return;
+    }
+
+    var platBlocked = blocked.filter(function(b) { return !!platVaIds[b.discord_id]; });
+    if (platBlocked.length === 0) return;
+
+    // Build a compact list
+    var lines = platBlocked.map(function(b) {
+      var name = platVaIds[b.discord_id] || b.va_name || b.discord_id;
+      var since = b.last_fail_at ? new Date(b.last_fail_at).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }) : '?';
+      return '• <@' + b.discord_id + '> (' + name + ') — bloque depuis le ' + since;
+    });
+
+    var msg =
+      '📬 **Digest quotidien — DM bloques sur ' + embeds.getPlatformLabel(platform) + '**\n\n' +
+      'Ces VA ne recoivent pas les DM du bot (resumes personnels, felicitations virales, alertes de chute) :\n\n' +
+      lines.join('\n') + '\n\n' +
+      '💡 **Action** : demande-leur d\'activer les DM serveur :\n' +
+      '_Maintiens appuye sur l\'icone du serveur → Parametres de confidentialite → Messages prives directs_\n\n' +
+      '_Consulte le panneau admin du dashboard pour plus de details._';
+
+    await alertsChannel.send({ content: msg });
+    console.log('[' + platform.toUpperCase() + '] DM blocked digest: ' + platBlocked.length + ' VA(s)');
+  } catch (err) {
+    console.error('sendDmBlockedDigest failed for ' + platform + ':', err.message);
+  }
+}
+
 async function awardDailyPointsForPlatform(platform) {
   var today = new Date().toISOString().split('T')[0];
   try {
@@ -743,12 +804,17 @@ async function runWeeklyCeremony(platform) {
 // Send a private DM to a VA. Silently no-ops if DM fails (user blocked bot etc.)
 async function sendVaDM(discordId, content) {
   if (!discordClient) return false;
+  var vaName = null;
   try {
     var user = await discordClient.users.fetch(discordId);
+    vaName = user.username || null;
     await user.send({ content: content });
+    // Record success (fire-and-forget)
+    db.recordDmAttempt(discordId, vaName, true, null).catch(function(){});
     return true;
   } catch (e) {
     console.log('[DM] Could not DM ' + discordId + ': ' + e.message);
+    db.recordDmAttempt(discordId, vaName, false, e.message).catch(function(){});
     return false;
   }
 }
@@ -997,4 +1063,4 @@ async function notifyRevocation(user, reason) {
   } catch (e) {}
 }
 
-module.exports = { initCronJobs: initCronJobs, sendDailySummaryForPlatform: sendDailySummaryForPlatform, sendVaDM: sendVaDM, sweepDashboardUsers: sweepDashboardUsers, runWeeklyCeremony: runWeeklyCeremony };
+module.exports = { initCronJobs: initCronJobs, sendDailySummaryForPlatform: sendDailySummaryForPlatform, sendVaDM: sendVaDM, sweepDashboardUsers: sweepDashboardUsers, runWeeklyCeremony: runWeeklyCeremony, getDiscordClient: function() { return discordClient; } };
