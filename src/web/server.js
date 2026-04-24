@@ -628,6 +628,15 @@ function createWebServer() {
     return next();
   }
 
+  // Managers and admins both have access — used for supervision features
+  // (activity status, DM status) that managers need to supervise their team.
+  function checkManagerOrAdmin(req, res, next) {
+    if (req.userRole !== 'admin' && req.userRole !== 'manager') {
+      return res.status(403).json({ error: 'Manager or admin only' });
+    }
+    return next();
+  }
+
   // List all dashboard users
   app.get('/api/admin/users', checkAuth, checkAdmin, function(req, res) {
     var users = Object.keys(DASHBOARD_USERS).map(function(u) {
@@ -756,11 +765,18 @@ function createWebServer() {
   //   - red:    no post for 2+ days, OR < 10 posts in 7 days, OR never posted
   //   - orange: 0 posts today past 14:00 Paris, OR under-posting today
   //   - green:  on pace
-  app.get('/api/admin/activity-status', checkAuth, checkAdmin, async function(req, res) {
+  app.get('/api/admin/activity-status', checkAuth, checkManagerOrAdmin, async function(req, res) {
     try {
       var cron = require('../jobs/cron');
       var client = cron.getDiscordClient ? cron.getDiscordClient() : null;
       if (!client) return res.json({ count: 0, users: [], warning: 'Discord client not ready' });
+
+      // Optional platform filter (query param). If set, restrict to that single platform.
+      var requestedPlatform = req.query.platform;
+      var platforms = config.getActivePlatforms();
+      if (requestedPlatform && platforms.indexOf(requestedPlatform) !== -1) {
+        platforms = [requestedPlatform];
+      }
 
       // Gather activity rows per platform
       var platforms = config.getActivePlatforms();
@@ -872,15 +888,19 @@ function createWebServer() {
 
   // Return DM delivery status for all VAs (cross-referenced with current Discord members).
   // Each row is one VA discord_id with their current DM health.
-  app.get('/api/admin/dm-status', checkAuth, checkAdmin, async function(req, res) {
+  app.get('/api/admin/dm-status', checkAuth, checkManagerOrAdmin, async function(req, res) {
     try {
       var dbRows = await db.getAllDmStatus();
       var byId = {};
       dbRows.forEach(function(r) { byId[r.discord_id] = r; });
 
-      // Cross-reference with current Discord members (per platform)
-      // so that VAs who never received any DM still show up as "never tested".
+      // Optional platform filter
+      var requestedPlatform = req.query.platform;
       var platforms = config.getActivePlatforms();
+      if (requestedPlatform && platforms.indexOf(requestedPlatform) !== -1) {
+        platforms = [requestedPlatform];
+      }
+
       var out = [];
       var seen = {};
 
