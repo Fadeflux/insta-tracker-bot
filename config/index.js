@@ -47,6 +47,21 @@ var platforms = {
     managerRoleId: process.env.MANAGER_ROLE_ID_GEELARK,
     vaRoleId: process.env.VA_ROLE_ID_GEELARK,
   },
+  threads: {
+    guildId: process.env.GUILD_ID_THREADS,
+    channels: {
+      links: process.env.CHANNEL_LINKS_THREADS,
+      managers: process.env.CHANNEL_MANAGERS_THREADS,
+      results: process.env.CHANNEL_RESULTS_THREADS,
+      alerts: process.env.CHANNEL_ALERTS_THREADS,
+      coaching: process.env.CHANNEL_COACHING_THREADS,
+      results6h: process.env.CHANNEL_RESULTS_6H_THREADS,
+      duels: process.env.CHANNEL_DUELS_THREADS,
+      viral: process.env.CHANNEL_VIRAL_THREADS,
+    },
+    managerRoleId: process.env.MANAGER_ROLE_ID_THREADS,
+    vaRoleId: process.env.VA_ROLE_ID_THREADS,
+  },
 };
 
 // Build guild-to-platform lookup map
@@ -54,6 +69,7 @@ var guildToPlatform = {};
 if (platforms.instagram.guildId) guildToPlatform[platforms.instagram.guildId] = 'instagram';
 if (platforms.twitter.guildId) guildToPlatform[platforms.twitter.guildId] = 'twitter';
 if (platforms.geelark.guildId) guildToPlatform[platforms.geelark.guildId] = 'geelark';
+if (platforms.threads.guildId) guildToPlatform[platforms.threads.guildId] = 'threads';
 
 // Build channel-to-platform lookup map (for message routing)
 var channelToPlatform = {};
