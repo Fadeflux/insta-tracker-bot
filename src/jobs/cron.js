@@ -18,6 +18,12 @@ function initCronJobs(client) {
     try { await runForEachPlatform(sendDailySummaryForPlatform); } catch (err) { console.error('Daily summary cron failed', err.message); }
   }, { timezone: config.timezone });
 
+  // Personal daily recap DM at 23:59 Africa/Porto-Novo (Benin) — for each platform.
+  // Sent to EVERY active VA (even those with 0 posts, so they know they missed the day).
+  cron.schedule('59 23 * * *', async function() {
+    try { await runForEachPlatform(sendPersonalDailyRecap); } catch (err) { console.error('Personal recap cron failed', err.message); }
+  }, { timezone: 'Africa/Porto-Novo' });
+
   // 9h GMT+1 (= 8h UTC) - Reminder
   cron.schedule('0 8 * * *', async function() {
     try { await runForEachPlatform(sendPostReminder); } catch (err) { console.error('Reminder cron failed', err.message); }
@@ -430,6 +436,105 @@ async function sendInactivityAlert(platform) {
   console.log('[' + platform.toUpperCase() + '] Inactivity alert sent: ' + relevantInactive.length + ' VAs');
 }
 
+// Send a personal daily recap DM to every active VA on a platform.
+// Fires at 23:59 local time (Benin) so VAs see their own numbers for the
+// day that just ended — NOT a public leaderboard, just their own stats,
+// plus a gentle nudge when they're under target.
+async function sendPersonalDailyRecap(platform) {
+  try {
+    var members = await getVaMembers(platform);
+    if (members.length === 0) return;
+
+    // Use Paris "today" because the daily_summaries table is keyed on that.
+    // VAs in Benin running this at 23:59 local time will get the recap
+    // for the Paris-day that is still ongoing or just ended — close enough,
+    // and it matches the data they see elsewhere in the bot.
+    // Note: at 23:59 Benin (= 22:59 or 23:59 Paris depending on DST),
+    // Paris is still on the same ISO date, so toISOString-split works fine.
+    var today = new Date().toISOString().split('T')[0];
+    var leaderboard = await db.getLeaderboard(today, platform);
+    var platLabel = embeds.getPlatformLabel(platform);
+    var platEmoji = embeds.getPlatformEmoji(platform);
+    var TARGET = 6; // posts/day target
+
+    // Build quick rank lookup from the leaderboard (only VAs who posted are ranked)
+    var rankByVa = {};
+    leaderboard.forEach(function(row, idx) { rankByVa[row.va_discord_id] = idx + 1; });
+
+    var sent = 0, failed = 0, skipped = 0;
+
+    for (var i = 0; i < members.length; i++) {
+      var m = members[i];
+      var vaDiscordId = m.user.id;
+
+      try {
+        var stats = await db.getVaDailyStats(vaDiscordId, today, platform);
+        var posts = await db.getVaPostsToday(vaDiscordId, today, platform);
+
+        var nbPosts = posts.length;
+        var totalViews = stats ? Number(stats.total_views) || 0 : 0;
+        var totalLikes = stats ? Number(stats.total_likes) || 0 : 0;
+        var totalComments = stats ? Number(stats.total_comments) || 0 : 0;
+        var rank = rankByVa[vaDiscordId];
+        var nbRanked = leaderboard.length;
+
+        // Find best post (most views)
+        var bestPost = null;
+        if (posts.length > 0) {
+          bestPost = posts.reduce(function(acc, p) {
+            var v = Number(p.views) || 0;
+            if (!acc || v > (Number(acc.views) || 0)) return p;
+            return acc;
+          }, null);
+        }
+
+        // Build message — tone adapts to whether they hit target or not
+        var msg = '📊 **Ton resume du jour - ' + platLabel + '** ' + platEmoji + '\n\n';
+
+        if (nbPosts === 0) {
+          msg += '⚠️ **Tu n\'as poste aucun contenu aujourd\'hui.**\n\n' +
+            'L\'objectif est de **' + TARGET + ' posts/jour**. Meme 1 post vaut mieux que 0 !\n' +
+            'Demain est un nouveau jour. On compte sur toi 💪\n\n' +
+            '_Besoin d\'aide ou d\'idees de contenu ? Contacte un manager._';
+        } else if (nbPosts < TARGET) {
+          msg += '📝 **Posts du jour : ' + nbPosts + '/' + TARGET + '**\n' +
+            '👁️ **' + fmt(totalViews) + '** vues cumulees\n' +
+            '❤️ ' + fmt(totalLikes) + ' likes · 💬 ' + fmt(totalComments) + ' commentaires\n';
+          if (rank) msg += '🏅 Classement du jour : **' + rank + 'e** sur ' + nbRanked + '\n';
+          msg += '\n⚠️ Tu as fait moins que l\'objectif de ' + TARGET + ' posts. ';
+          msg += 'Si quelque chose t\'a bloque aujourd\'hui (idees, soucis technique, fatigue...), n\'hesite pas a en parler a un manager.\n';
+          if (bestPost) {
+            msg += '\n🔝 **Ton meilleur post du jour :**\n' +
+              '👁️ ' + fmt(Number(bestPost.views) || 0) + ' vues — ' + bestPost.url + '\n';
+          }
+          msg += '\nOn se retrouve demain 💪';
+        } else {
+          // Hit or exceeded target
+          msg += '🎉 **Objectif atteint ! ' + nbPosts + '/' + TARGET + ' posts** 🎉\n\n' +
+            '👁️ **' + fmt(totalViews) + '** vues cumulees\n' +
+            '❤️ ' + fmt(totalLikes) + ' likes · 💬 ' + fmt(totalComments) + ' commentaires\n';
+          if (rank) msg += '🏅 Classement du jour : **' + rank + 'e** sur ' + nbRanked + '\n';
+          if (bestPost) {
+            msg += '\n🔝 **Ton meilleur post du jour :**\n' +
+              '👁️ ' + fmt(Number(bestPost.views) || 0) + ' vues — ' + bestPost.url + '\n';
+          }
+          msg += '\nBravo, continue sur ta lancee ! 🔥';
+        }
+
+        var ok = await sendVaDM(vaDiscordId, msg);
+        if (ok) sent++; else failed++;
+      } catch (err) {
+        failed++;
+        console.log('[PersonalRecap] Failed for ' + vaDiscordId + ': ' + err.message);
+      }
+    }
+
+    console.log('[' + platform.toUpperCase() + '] Personal recap DMs — sent:' + sent + ' failed:' + failed + ' skipped:' + skipped);
+  } catch (err) {
+    console.error('sendPersonalDailyRecap failed for ' + platform + ':', err.message);
+  }
+}
+
 async function sendPerformanceDropAlert(platform) {
   var alertsChannel = await getChannel(platform, 'alerts');
   if (!alertsChannel) return;
@@ -445,7 +550,23 @@ async function sendPerformanceDropAlert(platform) {
     content: '**📉 Chute de performance — ' + embeds.getPlatformLabel(platform) + '**\n\nCes VA sont en dessous de 50% de leur moyenne :\n\n' + lines.join('\n')
   });
 
-  console.log('[' + platform.toUpperCase() + '] Performance drop alert: ' + drops.length + ' VAs');
+  // Also DM each VA concerned — personal touch, invites them to talk to a manager.
+  for (var i = 0; i < drops.length; i++) {
+    var d = drops[i];
+    if (!d.va_discord_id) continue;
+    var dmMsg =
+      '📉 **Chute de performance detectee sur ' + embeds.getPlatformLabel(platform) + '**\n\n' +
+      'Salut ! Tes stats du jour sont bien en dessous de ta moyenne habituelle :\n\n' +
+      '👁️ **' + fmt(Number(d.today_views)) + '** vues aujourd\'hui\n' +
+      '📊 vs **' + fmt(Number(d.avg_views)) + '** en moyenne (**' + d.pct_of_avg + '%** de ta moyenne)\n\n' +
+      'C\'est pas forcement grave — ca peut arriver (un post moins bon, un jour creux...). ' +
+      'Mais si ca dure plusieurs jours, ou si tu sens qu\'il y a un probleme :\n\n' +
+      '💬 **Contacte un manager** pour en parler. On est la pour t\'aider a debloquer la situation (nouvelle angle, changement de niche, coaching, etc).\n\n' +
+      'Ne reste pas seul face a une baisse de perf 💪';
+    await sendVaDM(d.va_discord_id, dmMsg);
+  }
+
+  console.log('[' + platform.toUpperCase() + '] Performance drop alert: ' + drops.length + ' VAs (channel + DM)');
 }
 
 // Per-account performance drop — detects accounts shadowbanned or losing
@@ -475,7 +596,40 @@ async function sendAccountDropAlert(platform) {
       '💡 _Pistes : pause de 24-48h, changer d\'angle/niche, verifier les hashtags, voir si le compte est shadowban sur iseoapp.com._'
   });
 
-  console.log('[' + platform.toUpperCase() + '] Account drop alert: ' + drops.length + ' accounts');
+  // Group drops by VA so each VA gets a single DM covering all their affected accounts.
+  var dropsByVa = {};
+  drops.forEach(function(d) {
+    if (!d.va_discord_id) return;
+    if (!dropsByVa[d.va_discord_id]) dropsByVa[d.va_discord_id] = [];
+    dropsByVa[d.va_discord_id].push(d);
+  });
+
+  var vaIds = Object.keys(dropsByVa);
+  for (var v = 0; v < vaIds.length; v++) {
+    var vaId = vaIds[v];
+    var accDrops = dropsByVa[vaId];
+    var accLines = accDrops.map(function(d) {
+      return '• **@' + d.username + '** — ' +
+        fmt(Number(d.recent_avg)) + ' vues/post (3j) vs ' +
+        fmt(Number(d.baseline_avg)) + ' avant (**' + d.pct_of_baseline + '%**)';
+    }).join('\n');
+
+    var suffix = accDrops.length > 1 ? ' comptes sont' : ' compte est';
+    var dmMsg =
+      '⚠️ **Alerte : ' + accDrops.length + (accDrops.length > 1 ? ' de tes' : ' de tes') + ' compte' + (accDrops.length > 1 ? 's' : '') + ' en chute sur ' + embeds.getPlatformLabel(platform) + '**\n\n' +
+      (accDrops.length > 1 ? 'Ces comptes performent' : 'Ce compte performe') + ' a <50% de leur moyenne des 7 derniers jours :\n\n' +
+      accLines + '\n\n' +
+      'C\'est un signal de **potentiel shadowban** ou de chute d\'engagement.\n\n' +
+      '💬 **Contacte un manager rapidement** pour decider quoi faire :\n' +
+      '• Pause de 24-48h sur le compte ?\n' +
+      '• Changement d\'angle / de niche ?\n' +
+      '• Rotation vers un autre compte ?\n\n' +
+      'Plus on agit vite, moins on brule de contenu pour rien 💪';
+
+    await sendVaDM(vaId, dmMsg);
+  }
+
+  console.log('[' + platform.toUpperCase() + '] Account drop alert: ' + drops.length + ' accounts across ' + vaIds.length + ' VA(s) (channel + DM)');
 }
 
 async function awardDailyPointsForPlatform(platform) {
