@@ -817,9 +817,23 @@ function createWebServer() {
         var plat = platforms[j];
         var pc = config.platforms[plat];
         if (!pc || !pc.guildId || !pc.vaRoleId) continue;
+        var guild = null;
         try {
-          var guild = await client.guilds.fetch(pc.guildId);
-          await guild.members.fetch();
+          guild = await client.guilds.fetch(pc.guildId);
+        } catch (e) {
+          console.log('[activity-status] guilds.fetch failed for ' + plat + ': ' + e.message);
+          continue;
+        }
+        // Try to refresh member cache, but fall back to whatever cache is already there.
+        // This avoids Discord rate-limits when we request multiple guilds in succession.
+        try {
+          if (guild.members.cache.size < 2) {
+            await guild.members.fetch();
+          }
+        } catch (e) {
+          console.log('[activity-status] members.fetch failed for ' + plat + ', using cache of size ' + guild.members.cache.size + ': ' + e.message);
+        }
+        try {
           var members = guild.members.cache.filter(function(m) {
             return m.roles.cache.has(pc.vaRoleId) && !m.user.bot;
           });
@@ -850,7 +864,7 @@ function createWebServer() {
             out.push(row);
           });
         } catch (e) {
-          // skip platform
+          console.log('[activity-status] Member iteration failed for ' + plat + ': ' + e.message);
         }
       }
 
@@ -930,9 +944,21 @@ function createWebServer() {
           var p = platforms[i];
           var pc = config.platforms[p];
           if (!pc || !pc.guildId || !pc.vaRoleId) continue;
+          var guild = null;
           try {
-            var guild = await client.guilds.fetch(pc.guildId);
-            await guild.members.fetch();
+            guild = await client.guilds.fetch(pc.guildId);
+          } catch (e) {
+            console.log('[dm-status] guilds.fetch failed for ' + p + ': ' + e.message);
+            continue;
+          }
+          try {
+            if (guild.members.cache.size < 2) {
+              await guild.members.fetch();
+            }
+          } catch (e) {
+            console.log('[dm-status] members.fetch failed for ' + p + ', using cache of size ' + guild.members.cache.size + ': ' + e.message);
+          }
+          try {
             var members = guild.members.cache.filter(function(m) {
               return m.roles.cache.has(pc.vaRoleId) && !m.user.bot;
             });
@@ -968,7 +994,7 @@ function createWebServer() {
               out.push(row);
             });
           } catch (e) {
-            // Skip platform if we can't fetch
+            console.log('[dm-status] Member iteration failed for ' + p + ': ' + e.message);
           }
         }
       }
