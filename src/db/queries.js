@@ -141,7 +141,68 @@ async function insertSnapshot(postId, stats) {
     await updatePostPerformance(postId, stats.views);
   }
 
+  // If scraper extracted the real publication time AND we don't have it yet,
+  // store it AND compute the delay (in minutes) between created_at (link sent) and posted_at (real publish).
+  if (stats.postedAt) {
+    try {
+      await pool.query(
+        "UPDATE posts SET posted_at = COALESCE(posted_at, $1::timestamptz), " +
+        "link_delay_minutes = COALESCE(link_delay_minutes, GREATEST(0, EXTRACT(EPOCH FROM (created_at - $1::timestamptz)) / 60)::int) " +
+        "WHERE id = $2",
+        [stats.postedAt, postId]
+      );
+    } catch (e) {
+      console.log('[posted_at] failed to update post ' + postId + ': ' + e.message);
+    }
+  }
+
   return result.rows[0];
+}
+
+// Mark a post as "late alert sent" so the cron doesn't DM the VA twice.
+async function markLateAlertSent(postId) {
+  await pool.query('UPDATE posts SET late_alert_sent = TRUE WHERE id = $1', [postId]);
+}
+
+// Get posts where:
+//  - posted_at is known (we managed to scrape the real time)
+//  - link_delay_minutes >= threshold (link was sent way after the post)
+//  - late_alert_sent is FALSE (we haven't notified yet)
+//  - platform is filtered (only IG today)
+async function getLateLinkPosts(thresholdMinutes, platform) {
+  var sql =
+    "SELECT p.id, p.url, p.va_discord_id, p.va_name, p.account_username, p.posted_at, p.created_at, p.link_delay_minutes, p.platform " +
+    "FROM posts p " +
+    "WHERE p.posted_at IS NOT NULL " +
+    "  AND p.link_delay_minutes >= $1 " +
+    "  AND COALESCE(p.late_alert_sent, FALSE) = FALSE " +
+    "  AND p.platform = $2 " +
+    "  AND p.created_at >= NOW() - INTERVAL '24 hours'";
+  var result = await pool.query(sql, [thresholdMinutes, platform]);
+  return result.rows;
+}
+
+// Idempotency check for slot reminders: returns true if reminder was already sent today.
+async function wasReminderSent(reminderKey) {
+  var result = await pool.query('SELECT 1 FROM slot_reminders_log WHERE reminder_key = $1', [reminderKey]);
+  return result.rowCount > 0;
+}
+
+async function markReminderSent(reminderKey) {
+  await pool.query(
+    'INSERT INTO slot_reminders_log (reminder_key) VALUES ($1) ON CONFLICT (reminder_key) DO NOTHING',
+    [reminderKey]
+  );
+}
+
+// Count how many posts a VA submitted in a given time window.
+// Used by the "late slot" cron to identify which VAs missed their slot.
+async function countPostsBetween(vaDiscordId, platform, fromIso, toIso) {
+  var result = await pool.query(
+    'SELECT COUNT(*)::int AS n FROM posts WHERE va_discord_id = $1 AND platform = $2 AND created_at >= $3 AND created_at < $4',
+    [vaDiscordId, platform, fromIso, toIso]
+  );
+  return result.rows[0].n;
 }
 
 async function getLatestSnapshot(postId) {
@@ -918,6 +979,7 @@ async function getAccountDetails(accountId, daysLimit) {
   if (!account) return null;
   var postsSql =
     "SELECT p.id, p.ig_post_id, p.url, p.va_name, p.va_discord_id, p.created_at, " +
+    "       p.posted_at, p.link_delay_minutes, " +
     "       p.caption, p.performance, p.platform, p.status, " +
     "       s.views, s.likes, s.comments, s.shares, s.retweets, s.quote_tweets, s.bookmarks " +
     "FROM posts p " +
@@ -1146,6 +1208,7 @@ module.exports = {
   getNewPostsReachingThreshold, recordViralNotification,
   recordDmAttempt, getAllDmStatus, getBlockedDmVAs, getVaActivityStatus,
   getShadowbanCandidates, computeShadowbanScore,
+  markLateAlertSent, getLateLinkPosts, wasReminderSent, markReminderSent, countPostsBetween,
   // Streaks
   updateStreak, getAllStreaks,
   // Alerts
