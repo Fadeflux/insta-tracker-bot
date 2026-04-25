@@ -50,7 +50,7 @@ function extractUsername(url) {
 }
 
 async function scrapePost(url) {
-  var result = { views: 0, likes: 0, comments: 0, shares: 0, username: null };
+  var result = { views: 0, likes: 0, comments: 0, shares: 0, username: null, postedAt: null };
   var postCode = extractId(url);
   if (!postCode) { result.error = 'Invalid URL'; return result; }
 
@@ -108,6 +108,21 @@ async function scrapePost(url) {
     /"quote_count"\s*:\s*(\d+)/,
   ]);
   var views = findFirstNumber(html, [/"view_count"\s*:\s*(\d+)/]);
+
+  // taken_at: Unix timestamp from embedded JSON
+  var tsM = html.match(/"taken_at"\s*:\s*(\d+)/);
+  if (tsM) {
+    var tsVal = parseInt(tsM[1], 10);
+    if (tsVal > 1000000000) result.postedAt = new Date(tsVal * 1000).toISOString();
+  }
+  // Fallback: <time datetime="...">
+  if (!result.postedAt) {
+    var timeM = html.match(/<time[^>]*datetime\s*=\s*["']([^"']+)["']/i);
+    if (timeM) {
+      var d = new Date(timeM[1]);
+      if (!isNaN(d.getTime())) result.postedAt = d.toISOString();
+    }
+  }
 
   if (likes != null) result.likes = likes;
   if (comments != null) result.comments = comments;
