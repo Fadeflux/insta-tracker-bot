@@ -93,7 +93,32 @@ DO $$ BEGIN
     ALTER TABLE posts ADD COLUMN guild_id VARCHAR(32);
   END IF;
 
+  -- Add posted_at: actual publication time as scraped from the platform.
+  -- Different from created_at which is when the VA submitted the link to the bot.
+  -- The delay (created_at - posted_at) tells us if the VA reported their post on time.
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='posts' AND column_name='posted_at') THEN
+    ALTER TABLE posts ADD COLUMN posted_at TIMESTAMPTZ;
+  END IF;
+
+  -- Add link_delay_minutes: cached delay in minutes between posted_at and created_at.
+  -- NULL = posted_at unknown. Computed once on scrape.
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='posts' AND column_name='link_delay_minutes') THEN
+    ALTER TABLE posts ADD COLUMN link_delay_minutes INTEGER;
+  END IF;
+
+  -- Add late_alert_sent: avoid sending the >2h delay DM more than once per post.
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='posts' AND column_name='late_alert_sent') THEN
+    ALTER TABLE posts ADD COLUMN late_alert_sent BOOLEAN DEFAULT FALSE;
+  END IF;
+
 END $$;
+
+-- Idempotency table for slot reminders (prevents double-sending if cron fires twice)
+CREATE TABLE IF NOT EXISTS slot_reminders_log (
+  reminder_key   VARCHAR(64) PRIMARY KEY,  -- e.g. "morning_2026-04-25" or "morning_late_2026-04-25"
+  sent_at        TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_slot_reminders_sent ON slot_reminders_log(sent_at);
 
 -- === STREAKS TABLE (from v1) ===
 CREATE TABLE IF NOT EXISTS va_streaks (
