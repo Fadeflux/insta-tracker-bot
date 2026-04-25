@@ -22,7 +22,7 @@ function getRandomUA() {
 }
 
 async function scrapePost(url) {
-  var result = { views: 0, likes: 0, comments: 0, shares: 0, username: null };
+  var result = { views: 0, likes: 0, comments: 0, shares: 0, username: null, postedAt: null };
   var postId = extractId(url);
   if (!postId) { result.error = 'Invalid URL'; return result; }
 
@@ -104,6 +104,11 @@ async function scrapePost(url) {
               if (!result.username && media.owner && media.owner.username) {
                 result.username = String(media.owner.username).toLowerCase();
               }
+              // Extract publication time (Unix timestamp in seconds)
+              if (!result.postedAt) {
+                var ts = media.taken_at_timestamp || media.taken_at || (media.media && media.media.taken_at_timestamp);
+                if (ts) result.postedAt = new Date(Number(ts) * 1000).toISOString();
+              }
               console.log('GraphQL parsed OK for ' + postId);
             }
           } catch(pe) {
@@ -134,6 +139,10 @@ async function scrapePost(url) {
               if (!result.username) {
                 if (item.user && item.user.username) result.username = String(item.user.username).toLowerCase();
                 else if (item.owner && item.owner.username) result.username = String(item.owner.username).toLowerCase();
+              }
+              if (!result.postedAt) {
+                var ts2 = item.taken_at || item.taken_at_timestamp;
+                if (ts2) result.postedAt = new Date(Number(ts2) * 1000).toISOString();
               }
               console.log('__a=1 parsed OK for ' + postId);
             }
@@ -184,6 +193,32 @@ async function scrapePost(url) {
 function extractFromHtml(html, result) {
   // First, try to unescape the HTML to normalize the JSON
   var unescaped = html.replace(/\\\\"/g, '"').replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+
+  // posted_at: Unix timestamp from JSON or ISO datetime from HTML
+  if (!result.postedAt) {
+    var tsPatterns = [
+      /taken_at_timestamp\\*"?\s*:\s*(\d+)/,
+      /taken_at\\*"?\s*:\s*(\d+)/,
+    ];
+    for (var ti = 0; ti < tsPatterns.length; ti++) {
+      var tm = unescaped.match(tsPatterns[ti]) || html.match(tsPatterns[ti]);
+      if (tm) {
+        var tsVal = parseInt(tm[1], 10);
+        if (tsVal > 1000000000) { // sanity check (must be a real Unix timestamp)
+          result.postedAt = new Date(tsVal * 1000).toISOString();
+          break;
+        }
+      }
+    }
+    // Fallback: <time datetime="2026-04-25T10:23:45.000Z">
+    if (!result.postedAt) {
+      var timeM = html.match(/<time[^>]*datetime\s*=\s*["']([^"']+)["']/i);
+      if (timeM) {
+        var d = new Date(timeM[1]);
+        if (!isNaN(d.getTime())) result.postedAt = d.toISOString();
+      }
+    }
+  }
 
   // likes
   if (result.likes === 0) {
