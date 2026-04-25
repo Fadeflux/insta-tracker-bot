@@ -24,6 +24,39 @@ function initCronJobs(client) {
     try { await runForEachPlatform(sendPersonalDailyRecap); } catch (err) { console.error('Personal recap cron failed', err.message); }
   }, { timezone: 'Africa/Porto-Novo' });
 
+  // === SLOT REMINDERS (Instagram only, Benin time) ===
+  // 09h00 — "It's time to post (morning slot)"
+  cron.schedule('0 9 * * *', async function() {
+    try { await sendSlotReminder('morning'); } catch (err) { console.error('Slot reminder morning failed:', err.message); }
+  }, { timezone: 'Africa/Porto-Novo' });
+  // 10h00 — "You're late on the morning slot" (only to VAs who didn't post 9-10)
+  cron.schedule('0 10 * * *', async function() {
+    try { await sendLateSlotAlert('morning'); } catch (err) { console.error('Late alert morning failed:', err.message); }
+  }, { timezone: 'Africa/Porto-Novo' });
+  // 17h00 — "It's time to post (afternoon slot)"
+  cron.schedule('0 17 * * *', async function() {
+    try { await sendSlotReminder('afternoon'); } catch (err) { console.error('Slot reminder afternoon failed:', err.message); }
+  }, { timezone: 'Africa/Porto-Novo' });
+  // 18h00 — "You're late on the afternoon slot"
+  cron.schedule('0 18 * * *', async function() {
+    try { await sendLateSlotAlert('afternoon'); } catch (err) { console.error('Late alert afternoon failed:', err.message); }
+  }, { timezone: 'Africa/Porto-Novo' });
+  // 23h00 — "It's time to post (evening slot)"
+  cron.schedule('0 23 * * *', async function() {
+    try { await sendSlotReminder('evening'); } catch (err) { console.error('Slot reminder evening failed:', err.message); }
+  }, { timezone: 'Africa/Porto-Novo' });
+  // 00h00 — "You're late on the evening slot"
+  cron.schedule('0 0 * * *', async function() {
+    try { await sendLateSlotAlert('evening'); } catch (err) { console.error('Late alert evening failed:', err.message); }
+  }, { timezone: 'Africa/Porto-Novo' });
+
+  // === DELAY > 2H ALERT (every 10 min) ===
+  // Detects posts where the link was sent >2h after the actual publication.
+  // Sends a DM to the VA + an alert in #alerts of the platform.
+  cron.schedule('*/10 * * * *', async function() {
+    try { await checkLatePostLinks('instagram'); } catch (err) { console.error('Late link check failed:', err.message); }
+  }, { timezone: 'UTC' });
+
   // 9h GMT+1 (= 8h UTC) - Reminder
   cron.schedule('0 8 * * *', async function() {
     try { await runForEachPlatform(sendPostReminder); } catch (err) { console.error('Reminder cron failed', err.message); }
@@ -739,6 +772,204 @@ async function sendDmBlockedDigest(platform) {
   } catch (err) {
     console.error('sendDmBlockedDigest failed for ' + platform + ':', err.message);
   }
+}
+
+// ============================================================================
+// SLOT REMINDERS (Instagram only, Benin schedule: 9h, 17h, 23h)
+// ============================================================================
+
+var SLOT_INFO = {
+  morning:   { label: 'matin',         hour: 9,  emoji: '🌅' },
+  afternoon: { label: 'apres-midi',    hour: 17, emoji: '☀️' },
+  evening:   { label: 'soir',          hour: 23, emoji: '🌙' },
+};
+
+// Get today's date as YYYY-MM-DD in Benin TZ (used for idempotency keys).
+function getBeninToday() {
+  var p = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Porto-Novo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  return p; // already YYYY-MM-DD in en-CA locale
+}
+
+// Build the start/end timestamps (UTC ISO) for a given slot today in Benin.
+// e.g. 'morning' -> from today 09:00 Benin, to today 10:00 Benin.
+// Returns { fromIso, toIso } in UTC.
+function getSlotWindow(slot) {
+  var info = SLOT_INFO[slot];
+  if (!info) return null;
+  // Benin is UTC+1 year-round (no DST). 09h Benin = 08h UTC, etc.
+  var today = getBeninToday(); // YYYY-MM-DD
+  var pad = function(n) { return n < 10 ? '0' + n : '' + n; };
+  var startUtcHour = info.hour - 1;
+  var endUtcHour = info.hour;
+  var fromIso, toIso;
+  if (slot === 'evening') {
+    // 23h Benin = 22h UTC; window is 23h-00h Benin = 22h-23h UTC
+    fromIso = today + 'T' + pad(startUtcHour) + ':00:00Z';
+    toIso   = today + 'T' + pad(endUtcHour)   + ':00:00Z';
+  } else {
+    fromIso = today + 'T' + pad(startUtcHour) + ':00:00Z';
+    toIso   = today + 'T' + pad(endUtcHour)   + ':00:00Z';
+  }
+  return { fromIso: fromIso, toIso: toIso };
+}
+
+// Send a DM to all active Instagram VAs reminding them it's time to post.
+// Idempotent: each (slot, day) pair is only sent once even if the cron fires twice.
+async function sendSlotReminder(slot) {
+  var info = SLOT_INFO[slot];
+  if (!info) return;
+  var today = getBeninToday();
+  var key = 'reminder_' + slot + '_' + today;
+  try {
+    if (await db.wasReminderSent(key)) {
+      console.log('[SlotReminder ' + slot + '] already sent today, skip');
+      return;
+    }
+  } catch (e) { /* table may not exist yet on first run; continue */ }
+
+  var pc = config.platforms.instagram;
+  if (!pc || !pc.guildId || !pc.vaRoleId) {
+    console.log('[SlotReminder ' + slot + '] Instagram platform not configured, skip');
+    return;
+  }
+
+  var client = null;
+  try { var nw = require('./notifyWorker'); if (nw.getDiscordClient) client = nw.getDiscordClient(); } catch (e) {}
+  if (!client) { client = discordClient; }
+  if (!client) { console.log('[SlotReminder ' + slot + '] No Discord client, skip'); return; }
+
+  var guild;
+  try {
+    guild = await client.guilds.fetch(pc.guildId);
+    if (guild.members.cache.size < 2) await guild.members.fetch();
+  } catch (e) {
+    console.log('[SlotReminder ' + slot + '] Failed to fetch guild: ' + e.message);
+    return;
+  }
+
+  var members = guild.members.cache.filter(function(m) {
+    return m.roles.cache.has(pc.vaRoleId) && !m.user.bot;
+  });
+
+  var msg =
+    info.emoji + ' **C\'est l\'heure de poster — slot du ' + info.label + ' (' + info.hour + 'h)** \n\n' +
+    'Hey ! C\'est ton creneau de post du ' + info.label + '. Pense a poster sur Instagram et a envoyer ton lien dans le canal #links des que possible. \n\n' +
+    'Tu as 1h pour poster, sinon je te re-pingue 😉';
+
+  var sent = 0, failed = 0;
+  for (var [id, m] of members) {
+    try {
+      await sendVaDM(id, msg);
+      sent++;
+    } catch (e) {
+      failed++;
+    }
+  }
+
+  console.log('[SlotReminder ' + slot + '] sent=' + sent + ' failed=' + failed);
+  try { await db.markReminderSent(key); } catch (e) {}
+}
+
+// Send a DM to VAs who did NOT post in the slot window.
+// Also runs idempotently per (slot, day).
+async function sendLateSlotAlert(slot) {
+  var info = SLOT_INFO[slot];
+  if (!info) return;
+  var today = getBeninToday();
+  var key = 'late_' + slot + '_' + today;
+  try {
+    if (await db.wasReminderSent(key)) {
+      console.log('[LateAlert ' + slot + '] already sent today, skip');
+      return;
+    }
+  } catch (e) {}
+
+  var pc = config.platforms.instagram;
+  if (!pc || !pc.guildId || !pc.vaRoleId) return;
+
+  var client = null;
+  try { var nw = require('./notifyWorker'); if (nw.getDiscordClient) client = nw.getDiscordClient(); } catch (e) {}
+  if (!client) client = discordClient;
+  if (!client) { console.log('[LateAlert ' + slot + '] No Discord client'); return; }
+
+  var guild;
+  try {
+    guild = await client.guilds.fetch(pc.guildId);
+    if (guild.members.cache.size < 2) await guild.members.fetch();
+  } catch (e) { return; }
+
+  var members = guild.members.cache.filter(function(m) {
+    return m.roles.cache.has(pc.vaRoleId) && !m.user.bot;
+  });
+
+  var window = getSlotWindow(slot);
+  if (!window) return;
+
+  var lateCount = 0;
+  for (var [id, m] of members) {
+    try {
+      var n = await db.countPostsBetween(id, 'instagram', window.fromIso, window.toIso);
+      if (n === 0) {
+        var msg =
+          '⚠️ **Tu es en retard sur ton post du ' + info.label + ' (' + info.hour + 'h)** \n\n' +
+          'Tu n\'as pas encore envoye de lien depuis le rappel de ' + info.hour + 'h. \n' +
+          'Mets ton lien dans le canal #links des que possible pour qu\'on tracke les performances ! \n\n' +
+          'Si tu as deja poste mais oublie d\'envoyer le lien, fais-le maintenant 🙏';
+        try { await sendVaDM(id, msg); lateCount++; } catch (e) {}
+      }
+    } catch (e) { /* skip this VA */ }
+  }
+
+  console.log('[LateAlert ' + slot + '] late VAs notified: ' + lateCount);
+  try { await db.markReminderSent(key); } catch (e) {}
+}
+
+// Detect posts where link was sent >2h after the real publication time.
+// For each: DM to the VA + alert in #alerts of the platform.
+// Marks late_alert_sent=TRUE to avoid double-sending.
+async function checkLatePostLinks(platform) {
+  var DELAY_THRESHOLD_MIN = 120; // 2 hours
+
+  var late = await db.getLateLinkPosts(DELAY_THRESHOLD_MIN, platform);
+  if (!late || late.length === 0) return;
+
+  var alertsChannel = await getChannel(platform, 'alerts');
+
+  for (var i = 0; i < late.length; i++) {
+    var p = late[i];
+    var delayH = Math.floor(p.link_delay_minutes / 60);
+    var delayM = p.link_delay_minutes % 60;
+    var delayStr = delayH + 'h' + (delayM < 10 ? '0' : '') + delayM;
+    var postedTime = new Date(p.posted_at).toLocaleString('fr-FR', { timeZone: 'Africa/Porto-Novo', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+    var sentTime = new Date(p.created_at).toLocaleString('fr-FR', { timeZone: 'Africa/Porto-Novo', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+
+    // 1) DM to VA
+    try {
+      var dmMsg =
+        '⏰ **Delai d\'envoi de lien important detecte** \n\n' +
+        'Tu as poste sur **@' + (p.account_username || '?') + '** a **' + postedTime + '**, ' +
+        'mais tu as envoye le lien au bot a **' + sentTime + '** (delai : **' + delayStr + '**). \n\n' +
+        'Pense a envoyer ton lien des que tu publies — sinon les performances ne sont pas trackees correctement, ' +
+        'ce qui peut affecter ton score et le suivi qualite de ton compte.';
+      await sendVaDM(p.va_discord_id, dmMsg);
+    } catch (e) { /* ignore */ }
+
+    // 2) Alert in #alerts
+    if (alertsChannel) {
+      try {
+        var chMsg =
+          '⏰ **Delai d\'envoi de lien — ' + embeds.getPlatformLabel(platform) + '**\n' +
+          '<@' + p.va_discord_id + '> (' + (p.va_name || '?') + ') a poste sur **@' + (p.account_username || '?') + '** ' +
+          'a ' + postedTime + ' mais a envoye le lien a ' + sentTime + ' (delai : **' + delayStr + '**).';
+        await alertsChannel.send({ content: chMsg });
+      } catch (e) { /* ignore */ }
+    }
+
+    // 3) Mark as alerted
+    try { await db.markLateAlertSent(p.id); } catch (e) {}
+  }
+
+  console.log('[LateLinkCheck] notified for ' + late.length + ' post(s) on ' + platform);
 }
 
 async function awardDailyPointsForPlatform(platform) {
