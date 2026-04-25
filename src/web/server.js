@@ -115,6 +115,18 @@ function getEffectivePlatform(req) {
   return req.userPlatform; // forced to user's platform
 }
 
+// Get the list of platforms a user is allowed to see/query.
+// Used for supervision endpoints (activity-status, dm-status) so a manager
+// only sees their assigned platforms.
+function getUserAllowedPlatforms(req) {
+  var userPlat = req.userPlatform;
+  if (!userPlat || userPlat === 'all') return config.getActivePlatforms();
+  if (userPlat.indexOf(',') !== -1) {
+    return userPlat.split(',').map(function(p) { return String(p).toLowerCase().trim(); }).filter(Boolean);
+  }
+  return [String(userPlat).toLowerCase().trim()];
+}
+
 function createWebServer() {
   loadUsers();
   var app = express();
@@ -156,6 +168,10 @@ function createWebServer() {
     } else {
       allowedPlatforms = [user.platform];
     }
+    // Normalize: lowercase + trim + dedupe to protect against mixed-case stored values
+    allowedPlatforms = allowedPlatforms
+      .map(function(p) { return String(p).toLowerCase().trim(); })
+      .filter(function(p, i, a) { return p && a.indexOf(p) === i; });
     console.log('[Login] Success: ' + username + ' role=' + user.role + ' platform=' + user.platform);
     return res.json({
       token: token,
@@ -178,6 +194,9 @@ function createWebServer() {
     } else {
       allowedPlatforms = [user.platform];
     }
+    allowedPlatforms = allowedPlatforms
+      .map(function(p) { return String(p).toLowerCase().trim(); })
+      .filter(function(p, i, a) { return p && a.indexOf(p) === i; });
     res.json({
       username: req.user,
       role: user.role,
@@ -783,8 +802,12 @@ function createWebServer() {
       if (!client) return res.json({ count: 0, users: [], warning: 'Discord client not ready' });
 
       // Optional platform filter (query param). If set, restrict to that single platform.
+      // Always restrict to the user's allowed platforms (for managers).
       var requestedPlatform = req.query.platform;
-      var platforms = config.getActivePlatforms();
+      var allowedForUser = getUserAllowedPlatforms(req);
+      var platforms = config.getActivePlatforms().filter(function(p) {
+        return allowedForUser.indexOf(p) !== -1;
+      });
       if (requestedPlatform && platforms.indexOf(requestedPlatform) !== -1) {
         platforms = [requestedPlatform];
       }
@@ -916,8 +939,12 @@ function createWebServer() {
       dbRows.forEach(function(r) { byId[r.discord_id] = r; });
 
       // Optional platform filter
+      // Always restrict to the user's allowed platforms (for managers).
       var requestedPlatform = req.query.platform;
-      var platforms = config.getActivePlatforms();
+      var allowedForUser = getUserAllowedPlatforms(req);
+      var platforms = config.getActivePlatforms().filter(function(p) {
+        return allowedForUser.indexOf(p) !== -1;
+      });
       if (requestedPlatform && platforms.indexOf(requestedPlatform) !== -1) {
         platforms = [requestedPlatform];
       }
