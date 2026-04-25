@@ -18,7 +18,7 @@ function getRandomUA() {
 }
 
 async function scrapeTweet(url) {
-  var result = { views: 0, likes: 0, comments: 0, shares: 0, retweets: 0, quote_tweets: 0, bookmarks: 0, username: null };
+  var result = { views: 0, likes: 0, comments: 0, shares: 0, retweets: 0, quote_tweets: 0, bookmarks: 0, username: null, postedAt: null };
   var tweetId = extractId(url);
   if (!tweetId) { result.error = 'Invalid Twitter URL'; return result; }
 
@@ -48,6 +48,14 @@ async function scrapeTweet(url) {
           if (tw.bookmarks != null) result.bookmarks = Number(tw.bookmarks);
           if (tw.author && tw.author.screen_name) {
             result.username = String(tw.author.screen_name).toLowerCase();
+          }
+          if (tw.created_timestamp) {
+            // FxTwitter returns Unix seconds
+            result.postedAt = new Date(Number(tw.created_timestamp) * 1000).toISOString();
+          } else if (tw.created_at) {
+            // Some endpoints return ISO/RFC string
+            var d = new Date(tw.created_at);
+            if (!isNaN(d.getTime())) result.postedAt = d.toISOString();
           }
           console.log('[Twitter] FxTwitter OK: views=' + result.views + ' likes=' + result.likes + ' replies=' + result.comments + ' rt=' + result.retweets);
         }
