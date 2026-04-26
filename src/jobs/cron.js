@@ -13,10 +13,11 @@ function initCronJobs(client) {
     try { await db.endExpiredPosts(); } catch (err) { console.error('Expiration cron failed', err.message); }
   });
 
-  // Daily summary at 23:59 Europe/Paris — for each platform
+  // Daily summary at 23:59 Africa/Porto-Novo (Benin) — for each platform.
+  // Same TZ as personal recap so both are aligned with the team's working day.
   cron.schedule('59 23 * * *', async function() {
     try { await runForEachPlatform(sendDailySummaryForPlatform); } catch (err) { console.error('Daily summary cron failed', err.message); }
-  }, { timezone: config.timezone });
+  }, { timezone: 'Africa/Porto-Novo' });
 
   // Personal daily recap DM at 23:59 Africa/Porto-Novo (Benin) — for each platform.
   // Sent to EVERY active VA (even those with 0 posts, so they know they missed the day).
@@ -57,25 +58,25 @@ function initCronJobs(client) {
     try { await checkLatePostLinks('instagram'); } catch (err) { console.error('Late link check failed:', err.message); }
   }, { timezone: 'UTC' });
 
-  // 9h GMT+1 (= 8h UTC) - Reminder
-  cron.schedule('0 8 * * *', async function() {
-    try { await runForEachPlatform(sendPostReminder); } catch (err) { console.error('Reminder cron failed', err.message); }
-  }, { timezone: 'UTC' });
-
-  // 10h GMT+1 - Alert 1 post
+  // 9h Benin - Public reminder (ping VAs in #alerts)
   cron.schedule('0 9 * * *', async function() {
+    try { await runForEachPlatform(sendPostReminder); } catch (err) { console.error('Reminder cron failed', err.message); }
+  }, { timezone: 'Africa/Porto-Novo' });
+
+  // 10h Benin - Alert: should have at least 1 post
+  cron.schedule('0 10 * * *', async function() {
     try { await runForEachPlatform(function(p) { return sendPostAlert(p, 1); }); } catch (err) { console.error('Alert 1 cron failed', err.message); }
-  }, { timezone: 'UTC' });
+  }, { timezone: 'Africa/Porto-Novo' });
 
-  // 17h GMT+1 - Alert 2 posts
-  cron.schedule('0 16 * * *', async function() {
+  // 17h Benin - Alert: should have at least 2 posts
+  cron.schedule('0 17 * * *', async function() {
     try { await runForEachPlatform(function(p) { return sendPostAlert(p, 2); }); } catch (err) { console.error('Alert 2 cron failed', err.message); }
-  }, { timezone: 'UTC' });
+  }, { timezone: 'Africa/Porto-Novo' });
 
-  // 23h GMT+1 - Alert 3 posts
-  cron.schedule('0 22 * * *', async function() {
+  // 23h Benin - Alert: should have all 3 posts
+  cron.schedule('0 23 * * *', async function() {
     try { await runForEachPlatform(function(p) { return sendPostAlert(p, 3); }); } catch (err) { console.error('Alert 3 cron failed', err.message); }
-  }, { timezone: 'UTC' });
+  }, { timezone: 'Africa/Porto-Novo' });
 
   // Coaching every 10 min
   cron.schedule('*/10 * * * *', async function() {
@@ -85,28 +86,28 @@ function initCronJobs(client) {
   // Results every 6h
   cron.schedule('0 6,12,18,0 * * *', async function() {
     try { await runForEachPlatform(send6hResults); } catch (err) { console.error('6h results cron failed', err.message); }
-  }, { timezone: config.timezone });
+  }, { timezone: 'Africa/Porto-Novo' });
 
   // Inactivity check every 2 hours
   cron.schedule('0 10,12,14,16,18,20,22 * * *', async function() {
     try { await runForEachPlatform(sendInactivityAlert); } catch (err) { console.error('Inactivity alert failed', err.message); }
-  }, { timezone: config.timezone });
+  }, { timezone: 'Africa/Porto-Novo' });
 
   // Performance drop check at 18h
   cron.schedule('0 18 * * *', async function() {
     try { await runForEachPlatform(sendPerformanceDropAlert); } catch (err) { console.error('Perf drop alert failed', err.message); }
-  }, { timezone: config.timezone });
+  }, { timezone: 'Africa/Porto-Novo' });
 
   // Per-account performance drop check at 19h (1h after per-VA) — catches shadowbans
   cron.schedule('0 19 * * *', async function() {
     try { await runForEachPlatform(sendAccountDropAlert); } catch (err) { console.error('Account drop alert failed', err.message); }
-  }, { timezone: config.timezone });
+  }, { timezone: 'Africa/Porto-Novo' });
 
   // Daily DM-blocked digest at 09h00 Europe/Paris
   // Alerts admins about VAs whose DMs are currently blocked (so they can nag them to activate).
   cron.schedule('0 9 * * *', async function() {
     try { await runForEachPlatform(sendDmBlockedDigest); } catch (err) { console.error('DM blocked digest failed', err.message); }
-  }, { timezone: config.timezone });
+  }, { timezone: 'Africa/Porto-Novo' });
 
   // Daily sweep of inactive accounts — 01:05 Europe/Paris, low traffic window
   cron.schedule('5 1 * * *', async function() {
@@ -116,24 +117,24 @@ function initCronJobs(client) {
         console.log('[Accounts] ' + flipped.length + ' account(s) flagged inactive');
       }
     } catch (err) { console.error('Account inactivity sweep failed', err.message); }
-  }, { timezone: config.timezone });
+  }, { timezone: 'Africa/Porto-Novo' });
 
   // ==================== GAMIFICATION ====================
 
   // Award daily points — 23:58 Europe/Paris (just before the daily summary).
   cron.schedule('58 23 * * *', async function() {
     try { await runForEachPlatform(awardDailyPointsForPlatform); } catch (err) { console.error('Daily points cron failed', err.message); }
-  }, { timezone: config.timezone });
+  }, { timezone: 'Africa/Porto-Novo' });
 
   // Every Sunday at 21:00 Europe/Paris: announce weekly winner + resolve duels + create new duels for next week
   cron.schedule('0 21 * * 0', async function() {
     try { await runForEachPlatform(runWeeklyCeremony); } catch (err) { console.error('Weekly ceremony failed', err.message); }
-  }, { timezone: config.timezone });
+  }, { timezone: 'Africa/Porto-Novo' });
 
   // Dashboard user revocation sweep — every 6 hours (02h, 08h, 14h, 20h Europe/Paris)
   cron.schedule('0 2,8,14,20 * * *', async function() {
     try { await sweepDashboardUsers(); } catch (err) { console.error('Dashboard revocation sweep failed', err.message); }
-  }, { timezone: config.timezone });
+  }, { timezone: 'Africa/Porto-Novo' });
 
   // Viral post notifications — every 10 min
   cron.schedule('*/10 * * * *', async function() {
