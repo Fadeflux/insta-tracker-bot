@@ -171,30 +171,52 @@ function leaderboardEmbed(rankings, date, platform) {
   platform = platform || 'instagram';
   var medals = { 0: '🥇', 1: '🥈', 2: '🥉' };
   var lines = rankings.map(function(r, i) {
-    var medal = medals[i] || '  ' + (i + 1) + '.';
-    var postStatus = Number(r.post_count) >= 6 ? '✅' : '⚠️ (' + r.post_count + '/6)';
-    var badge = getVaBadge(Number(r.total_views), Number(r.post_count));
-    var engRate = Number(r.total_views) > 0 ? ((Number(r.total_likes) + Number(r.total_comments)) / Number(r.total_views) * 100).toFixed(1) : '0';
-    return medal + ' **' + r.va_name + '** [' + badge + '] → 👁️ ' + fmt(r.total_views) + ' | ❤️ ' + fmt(r.total_likes) + ' | 📊 ' + engRate + '% | ' + postStatus;
+    var medal = medals[i] || '` ' + (i + 1 < 10 ? ' ' : '') + (i + 1) + '`';
+    var ok = Number(r.post_count) >= 6 ? '✅' : '`' + r.post_count + '/6`';
+    var engRate = Number(r.total_views) > 0 ? ((Number(r.total_likes) + Number(r.total_comments)) / Number(r.total_views) * 100).toFixed(1) : '0.0';
+    return medal + ' **' + r.va_name + '** · ' + fmt(r.total_views) + ' vues · ' + fmt(r.total_likes) + ' ❤️ · ' + engRate + '% · ' + ok;
   });
+
+  var totalViews = rankings.reduce(function(a, b) { return a + Number(b.total_views || 0); }, 0);
+  var totalLikes = rankings.reduce(function(a, b) { return a + Number(b.total_likes || 0); }, 0);
+  var totalPosts = rankings.reduce(function(a, b) { return a + Number(b.post_count || 0); }, 0);
+
   return new EmbedBuilder()
-    .setColor(COLORS.gold)
-    .setTitle(getPlatformEmoji(platform) + ' 🏆 Classement du ' + date)
-    .setDescription(lines.join('\n') || 'Aucune donnee')
-    .setFooter({ text: getPlatformLabel(platform) + ' | Score = likes + comments×3 + shares×5' })
+    .setColor(getPlatformColor(platform))
+    .setAuthor({ name: '🏆 Classement quotidien · ' + getPlatformLabel(platform) })
+    .setTitle(date)
+    .setDescription(
+      '**' + fmt(totalViews) + '** vues · **' + fmt(totalLikes) + '** likes · **' + totalPosts + '** posts\n\n' +
+      (lines.join('\n') || '_Aucune donnee_')
+    )
+    .setFooter({ text: 'Score = likes + comments×3 + shares×5' })
     .setTimestamp();
 }
 
 function missingPostsEmbed(lateVAs, date, platform) {
   platform = platform || 'instagram';
-  var lines = lateVAs.map(function(va) {
-    return '⚠️ **' + va.name + '** → ' + va.postCount + '/6 posts';
+  // Group by post count for visual scan
+  var groups = {};
+  lateVAs.forEach(function(v) {
+    var k = v.postCount;
+    if (!groups[k]) groups[k] = [];
+    groups[k].push(v.name);
   });
+
+  var sortedKeys = Object.keys(groups).map(Number).sort(function(a, b) { return a - b; });
+  var lines = sortedKeys.map(function(k) {
+    var icon = k === 0 ? '🔴' : k <= 2 ? '🟠' : '🟡';
+    return icon + ' **' + k + '/6** · ' + groups[k].join(', ');
+  });
+
   return new EmbedBuilder()
     .setColor(COLORS.error)
-    .setTitle('❌ VA n\'ayant pas atteint 6 posts — ' + date)
-    .setDescription(lines.join('\n') || 'Tout le monde a atteint l\'objectif !')
-    .setFooter({ text: getPlatformLabel(platform) })
+    .setAuthor({ name: '⚠️ VA n\'ayant pas atteint l\'objectif · ' + getPlatformLabel(platform) })
+    .setTitle(date)
+    .setDescription(
+      '**' + lateVAs.length + '** VA' + (lateVAs.length > 1 ? 's' : '') + ' n\'ont pas atteint les 6 posts.\n\n' +
+      lines.join('\n')
+    )
     .setTimestamp();
 }
 
@@ -202,9 +224,160 @@ function allPostsMetEmbed(date, platform) {
   platform = platform || 'instagram';
   return new EmbedBuilder()
     .setColor(COLORS.success)
-    .setTitle('🎉 Objectif atteint ! — ' + date)
-    .setDescription('Tous les VA ont poste au moins **6 posts** aujourd\'hui. Bravo a toute l\'equipe !')
-    .setFooter({ text: getPlatformLabel(platform) })
+    .setAuthor({ name: '🎉 Objectif atteint ! · ' + getPlatformLabel(platform) })
+    .setTitle(date)
+    .setDescription('Tous les VA ont poste au moins **6 posts** aujourd\'hui.\nBravo a toute l\'equipe ! 🙌')
+    .setTimestamp();
+}
+
+// New embed: 6h periodic results.
+function results6hEmbed(rankings, hours, date, platform) {
+  platform = platform || 'instagram';
+  var medals = { 0: '🥇', 1: '🥈', 2: '🥉' };
+  var top15 = rankings.slice(0, 15);
+  var lines = top15.map(function(r, i) {
+    var medal = medals[i] || '` ' + (i + 1 < 10 ? ' ' : '') + (i + 1) + '`';
+    return medal + ' **' + r.va_name + '** · ' + fmt(r.total_views) + ' vues · ' + fmt(r.total_likes) + ' ❤️ · ' + r.post_count + ' posts';
+  });
+
+  var totalViews = rankings.reduce(function(a, b) { return a + Number(b.total_views || 0); }, 0);
+  var totalLikes = rankings.reduce(function(a, b) { return a + Number(b.total_likes || 0); }, 0);
+  var totalPosts = rankings.reduce(function(a, b) { return a + Number(b.post_count || 0); }, 0);
+
+  return new EmbedBuilder()
+    .setColor(getPlatformColor(platform))
+    .setAuthor({ name: '📊 Resultats ' + hours + ' · ' + getPlatformLabel(platform) })
+    .setTitle(date)
+    .setDescription(
+      '**' + fmt(totalViews) + '** vues · **' + fmt(totalLikes) + '** likes · **' + totalPosts + '** posts\n\n' +
+      lines.join('\n') +
+      (rankings.length > 15 ? '\n\n_+' + (rankings.length - 15) + ' autres VAs_' : '')
+    )
+    .setFooter({ text: 'Mise a jour automatique toutes les 6h' })
+    .setTimestamp();
+}
+
+// New embed: daily points + weekly standings.
+function dailyPointsEmbed(awarded, weeklyStandings, date, platform) {
+  platform = platform || 'instagram';
+  var medals = { 0: '🥇', 1: '🥈', 2: '🥉' };
+  var awardedLines = awarded.map(function(r, i) {
+    return medals[i] + ' **' + r.va_name + '** · **+' + r.points + ' pts** _(' + fmt(Number(r.total_views)) + ' vues)_';
+  });
+  var weeklyLines = weeklyStandings.slice(0, 5).map(function(s, i) {
+    var medal = medals[i] || '` ' + (i + 1) + '`';
+    return medal + ' **' + s.va_name + '** · ' + s.total_points + ' pts';
+  });
+
+  return new EmbedBuilder()
+    .setColor(COLORS.gold)
+    .setAuthor({ name: '🏆 Points du jour · ' + getPlatformLabel(platform) })
+    .setTitle(date)
+    .addFields(
+      { name: '🎯 Top 3 du jour', value: awardedLines.join('\n') || '_Aucun point distribue_', inline: false },
+      { name: '📊 Classement de la semaine', value: weeklyLines.join('\n') || '_Pas encore de points_', inline: false }
+    )
+    .setFooter({ text: 'Le #1 de la semaine est couronne champion dimanche soir' })
+    .setTimestamp();
+}
+
+// New embed: hourly progress check (10h, 17h, 23h Benin).
+function progressCheckEmbed(onTrackVAs, lateVAs, requiredPosts, slotName, platform) {
+  platform = platform || 'instagram';
+  var color = lateVAs.length === 0 ? COLORS.success : lateVAs.length > onTrackVAs.length ? COLORS.error : COLORS.warning;
+
+  // Build a compact "VAs en retard" line
+  var lateLine = '';
+  if (lateVAs.length > 0) {
+    var grouped = {};
+    lateVAs.forEach(function(v) {
+      var k = v.postCount;
+      if (!grouped[k]) grouped[k] = [];
+      grouped[k].push(v.name);
+    });
+    var keys = Object.keys(grouped).map(Number).sort(function(a, b) { return a - b; });
+    lateLine = keys.map(function(k) {
+      return '` ' + k + '/' + requiredPosts + ' ` ' + grouped[k].join(', ');
+    }).join('\n');
+  }
+
+  var embed = new EmbedBuilder()
+    .setColor(color)
+    .setAuthor({ name: '⏰ ' + slotName + ' · ' + getPlatformLabel(platform) })
+    .setDescription(
+      '**' + onTrackVAs.length + '** VA a jour (' + requiredPosts + '+ posts)\n' +
+      '**' + lateVAs.length + '** VA en retard'
+    );
+
+  if (lateVAs.length > 0) {
+    embed.addFields({ name: 'VAs en retard', value: lateLine, inline: false });
+  }
+  embed.setTimestamp();
+  return embed;
+}
+
+// New embed: viral post celebration in public channel.
+function viralCelebrationEmbed(post, views, likes, comments, threshold, platform) {
+  platform = platform || post.platform || 'instagram';
+  var lines = [];
+  if (post.account_username) lines.push('📱 **@' + post.account_username + '**');
+  lines.push('👁️ **' + fmt(views) + '** vues · ❤️ ' + fmt(likes) + ' · 💬 ' + fmt(comments));
+
+  return new EmbedBuilder()
+    .setColor(COLORS.viral)
+    .setAuthor({ name: '🔥 POST VIRAL · ' + getPlatformLabel(platform) })
+    .setDescription(
+      '<@' + post.va_discord_id + '> vient de franchir les **' + fmt(threshold) + ' vues** !\n\n' +
+      lines.join('\n')
+    )
+    .setURL(post.url)
+    .setTitle('Voir le post ↗')
+    .setTimestamp();
+}
+
+// New embed: 1h coaching feedback (sent in #coaching).
+function coachingFeedbackEmbed(post, stats, category, platform) {
+  platform = platform || post.platform || 'instagram';
+  var color, emoji, conseil, typeLabel = (platform === 'twitter' ? 'tweet' : 'post');
+
+  if (category === 'TRES BON') {
+    color = COLORS.success; emoji = '🔥';
+    conseil = 'Excellent travail ! Ce ' + typeLabel + ' performe tres bien. Continue comme ca !';
+  } else if (category === 'MOYEN') {
+    color = COLORS.warning; emoji = '👍';
+    conseil = 'Pas mal ! Le contenu engage mais les vues sont encore faibles. Essaie de poster aux meilleures heures.';
+  } else {
+    color = COLORS.error; emoji = '⚠️';
+    conseil = 'Ce ' + typeLabel + ' a du mal a performer. Regarde les ' + typeLabel + 's des meilleurs VA pour t\'inspirer.';
+  }
+
+  var engPct = stats.views > 0 ? ((Number(stats.likes || 0) + Number(stats.comments || 0)) / stats.views * 100).toFixed(1) : '0.0';
+  var statsLine = '👁️ **' + fmt(stats.views || 0) + '** vues · ❤️ ' + fmt(stats.likes || 0) + ' · 💬 ' + fmt(stats.comments || 0) + ' · 📊 ' + engPct + '%';
+
+  return new EmbedBuilder()
+    .setColor(color)
+    .setAuthor({ name: emoji + ' Feedback 1h · ' + category + ' · ' + getPlatformLabel(platform) })
+    .setDescription(
+      '<@' + post.va_discord_id + '>\n' +
+      statsLine + '\n\n' +
+      '💡 ' + conseil
+    )
+    .setURL(post.url)
+    .setTitle('Voir le ' + typeLabel + ' ↗')
+    .setTimestamp();
+}
+
+// Public morning ping (replaces the long verbose text).
+function morningPingEmbed(vaRoleId, linksChannelId, platform) {
+  platform = platform || 'instagram';
+  return new EmbedBuilder()
+    .setColor(getPlatformColor(platform))
+    .setAuthor({ name: '🌅 Rappel du matin · ' + getPlatformLabel(platform) })
+    .setDescription(
+      '<@&' + vaRoleId + '> C\'est l\'heure de poster votre **1er post** du jour !\n\n' +
+      '🇧🇯 Benin **9h** · 🇲🇬 Madagascar **11h**\n' +
+      'Envoyez votre lien dans <#' + linksChannelId + '> des publication.'
+    )
     .setTimestamp();
 }
 
@@ -219,5 +392,7 @@ module.exports = {
   newPostEmbed, hourlyUpdateEmbed, viralAlertEmbed,
   vaStatsEmbed, leaderboardEmbed,
   missingPostsEmbed, allPostsMetEmbed,
+  results6hEmbed, dailyPointsEmbed, progressCheckEmbed,
+  viralCelebrationEmbed, coachingFeedbackEmbed, morningPingEmbed,
   formatStats, fmt,
 };
