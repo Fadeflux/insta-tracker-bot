@@ -192,15 +192,12 @@ async function sendPostReminder(platform) {
   var alertsChannel = await getChannel(platform, 'alerts');
   if (!alertsChannel) return;
   var platConfig = config.platforms[platform];
-  var platformLabel = embeds.getPlatformLabel(platform);
-  var emoji = embeds.getPlatformEmoji(platform);
 
+  var embed = embeds.morningPingEmbed(platConfig.vaRoleId, platConfig.channels.links, platform);
   await alertsChannel.send({
-    content: '**' + emoji + ' Rappel du matin ! — ' + platformLabel + '**\n\n' +
-      '<@&' + platConfig.vaRoleId + '> C\'est l\'heure de poster votre **1er post** du jour !\n\n' +
-      '🇧🇯 Heure du Benin : **9h00**\n' +
-      '🇲🇬 Heure de Madagascar : **11h00**\n\n' +
-      'Envoyez votre lien dans <#' + platConfig.channels.links + '> des que c\'est publie.'
+    content: '<@&' + platConfig.vaRoleId + '>',
+    embeds: [embed],
+    allowedMentions: { parse: ['roles'] }
   });
   console.log('[' + platform.toUpperCase() + '] Morning reminder sent');
 }
@@ -269,14 +266,11 @@ async function sendPostAlert(platform, requiredPosts) {
     if (ok) dmSuccessCount++;
   }
 
-  // Public summary (without @mentions) — useful for managers watching the channel
+  // Public summary embed (without @mentions) — useful for managers watching the channel
   if (alertsChannel) {
-    await alertsChannel.send({
-      content: '**' + embeds.getPlatformEmoji(platform) + ' Point de la journee — ' + embeds.getPlatformLabel(platform) + '** (' + times.benin + ' Benin / ' + times.mada + ' Mada)\n\n' +
-        '✅ **' + onTrackVAs.length + '** VA a jour (' + requiredPosts + '+ posts)\n' +
-        '⚠️ **' + lateVAs.length + '** VA en retard — DM envoye a ' + dmSuccessCount + '/' + lateVAs.length + ' (les autres ont bloque les DMs du bot)\n\n' +
-        '_Les VA en retard :_ ' + lateVAs.map(function(v) { return v.name + ' (' + v.postCount + '/' + requiredPosts + ')'; }).join(', ')
-    });
+    var slotName = 'Point ' + times.benin + ' Benin · ' + times.mada + ' Mada';
+    var checkEmbed = embeds.progressCheckEmbed(onTrackVAs, lateVAs, requiredPosts, slotName, platform);
+    await alertsChannel.send({ embeds: [checkEmbed] });
   }
 
   console.log('[' + platform.toUpperCase() + '] Alert ' + requiredPosts + ': ' + lateVAs.length + ' VAs late, ' + dmSuccessCount + ' DMs delivered');
@@ -365,32 +359,9 @@ async function send6hResults(platform) {
   summaries.sort(function(a, b) { return Number(b.total_views) - Number(a.total_views); });
 
   var now = new Date();
-  var hours = now.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Paris' });
+  var hours = now.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', timeZone: 'Africa/Porto-Novo' });
 
-  var medals = { 0: '🥇', 1: '🥈', 2: '🥉' };
-  var lines = summaries.map(function(r, i) {
-    var medal = medals[i] || '  ' + (i + 1) + '.';
-    var tv = Number(r.total_views);
-    var tl = Number(r.total_likes);
-    var pc = Number(r.post_count);
-    return medal + ' **' + r.va_name + '** → 👁️ ' + fmt(tv) + ' | ❤️ ' + fmt(tl) + ' | 📝 ' + pc + ' posts';
-  });
-
-  var totalViews = summaries.reduce(function(a, b) { return a + Number(b.total_views); }, 0);
-  var totalLikes = summaries.reduce(function(a, b) { return a + Number(b.total_likes); }, 0);
-  var totalPosts = summaries.reduce(function(a, b) { return a + Number(b.post_count); }, 0);
-
-  var { EmbedBuilder } = require('discord.js');
-  var embed = new EmbedBuilder()
-    .setColor(embeds.getPlatformColor(platform))
-    .setTitle(embeds.getPlatformEmoji(platform) + ' 📊 Resultats a ' + hours + ' — ' + today)
-    .setDescription(
-      '**Totaux:** 👁️ ' + fmt(totalViews) + ' vues | ❤️ ' + fmt(totalLikes) + ' likes | 📝 ' + totalPosts + ' posts\n\n' +
-      lines.join('\n')
-    )
-    .setFooter({ text: embeds.getPlatformLabel(platform) + ' | Mise a jour automatique toutes les 6h' })
-    .setTimestamp();
-
+  var embed = embeds.results6hEmbed(summaries, hours, today, platform);
   await results6hChannel.send({ embeds: [embed] });
   console.log('[' + platform.toUpperCase() + '] 6h results sent at ' + hours);
 }
@@ -421,29 +392,14 @@ async function sendCoachingFeedback(platform) {
 
     if (views >= 500 || engagement >= 0.015) {
       category = 'TRES BON';
-      emoji = '🔥';
-      feedback = 'Excellent travail ! Ce ' + typeLabel + ' performe tres bien. Continue comme ca !';
     } else if (engagement >= 0.005 && engagement < 0.015) {
       category = 'MOYEN';
-      emoji = '👍';
-      feedback = 'Pas mal ! Le contenu engage mais les vues sont encore faibles. Essaie de poster aux meilleures heures.';
     } else {
       category = 'FAIBLE';
-      emoji = '❌';
-      feedback = 'Ce ' + typeLabel + ' a du mal a performer. Regarde les ' + typeLabel + 's des meilleurs VA pour t\'inspirer.';
     }
 
-    var msg = emoji + ' **Feedback 1h — ' + category + ' ' + embeds.getPlatformEmoji(platform) + '**\n\n' +
-      '**VA:** <@' + p.va_discord_id + '>\n' +
-      '**' + (platform === 'twitter' ? 'Tweet' : 'Post') + ':** ' + p.url + '\n\n' +
-      '**Stats a 1h:**\n' +
-      '👁️ Vues: **' + views + '**\n' +
-      '❤️ Likes: **' + likes + '**\n' +
-      '💬 ' + (platform === 'twitter' ? 'Replies' : 'Commentaires') + ': **' + comments + '**\n' +
-      '📊 Engagement: **' + engPct + '%**\n\n' +
-      '💡 **Conseil:** ' + feedback;
-
-    await coachingChannel.send({ content: msg });
+    var feedbackEmbed = embeds.coachingFeedbackEmbed(p, { views: views, likes: likes, comments: comments }, category, platform);
+    await coachingChannel.send({ embeds: [feedbackEmbed] });
     await db.markCoachingSent(p.id);
     console.log('[' + platform.toUpperCase() + '] Coaching sent for ' + p.ig_post_id + ' (' + category + ')');
   }
@@ -985,23 +941,11 @@ async function awardDailyPointsForPlatform(platform) {
     var resultsChannel = await getChannel(platform, 'results');
     if (!resultsChannel) return;
 
-    var medals = ['🥇', '🥈', '🥉'];
-    var lines = awarded.map(function(r, i) {
-      return medals[i] + ' **' + r.va_name + '** — **+' + r.points + ' pts** (' + fmt(Number(r.total_views)) + ' vues)';
-    });
-
     var bounds = db.getWeekBounds(today);
     var standings = await db.getWeeklyStandings(bounds.start, bounds.end, platform);
-    var standingsLines = standings.slice(0, 5).map(function(s, i) {
-      return (i + 1) + '. **' + s.va_name + '** — ' + s.total_points + ' pts';
-    });
 
-    await resultsChannel.send({
-      content: '**' + embeds.getPlatformEmoji(platform) + ' Points du jour — ' + today + '**\n\n' +
-        lines.join('\n') + '\n\n' +
-        '**📊 Classement de la semaine :**\n' + (standingsLines.join('\n') || '_Pas encore de points_') + '\n\n' +
-        '_Le #1 de la semaine est couronne champion dimanche soir._'
-    });
+    var pointsEmbed = embeds.dailyPointsEmbed(awarded, standings, today, platform);
+    await resultsChannel.send({ embeds: [pointsEmbed] });
     console.log('[' + platform.toUpperCase() + '] Daily points awarded: ' + awarded.length + ' VAs');
   } catch (err) {
     console.error('awardDailyPointsForPlatform failed for ' + platform + ':', err.message);
@@ -1148,14 +1092,9 @@ async function notifyViralPosts(platform) {
 
       // 2) Public celebration in #viral (or #results as fallback) — the group effect is the real engine
       if (targetChannel) {
-        var celebMsg =
-          '🔥 **POST VIRAL !** ' + embeds.getPlatformEmoji(platform) + '\n\n' +
-          '<@' + post.va_discord_id + '> vient de franchir les **' + fmt(VIRAL_THRESHOLD) + ' vues** !\n' +
-          (post.account_username ? '📱 Compte : **@' + post.account_username + '**\n' : '') +
-          '👁️ **' + fmt(views) + '** vues · ❤️ ' + fmt(Number(post.likes) || 0) + ' likes · 💬 ' + fmt(Number(post.comments) || 0) + ' com.\n' +
-          '🔗 ' + post.url;
         try {
-          await targetChannel.send({ content: celebMsg });
+          var celebEmbed = embeds.viralCelebrationEmbed(post, views, Number(post.likes) || 0, Number(post.comments) || 0, VIRAL_THRESHOLD, platform);
+          await targetChannel.send({ embeds: [celebEmbed] });
         } catch (e) {
           console.log('[Viral] Could not post to viral/results channel for ' + platform + ': ' + e.message);
         }
