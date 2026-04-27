@@ -198,72 +198,115 @@ function fetchDirect(url, ua) {
   });
 }
 
-function fetchViaProxy(url, ua) {
+function fetchViaProxy(targetUrl, ua) {
   return new Promise(function(resolve, reject) {
     if (!PROXY_HOST) return reject(new Error('no proxy configured'));
 
-    var parsed = new URL(url);
-    var targetHost = parsed.hostname;
-    var targetPort = 443;
+    var timeout = setTimeout(function() { reject(new Error('Proxy timeout')); }, 30000);
 
-    var sock = net.connect(PROXY_PORT, PROXY_HOST, function() {
-      // Send HTTP CONNECT (assuming HTTP proxy; SOCKS5 requires different handshake)
-      var auth = PROXY_USER ? 'Proxy-Authorization: Basic ' + Buffer.from(PROXY_USER + ':' + PROXY_PASS).toString('base64') + '\r\n' : '';
-      sock.write('CONNECT ' + targetHost + ':' + targetPort + ' HTTP/1.1\r\nHost: ' + targetHost + ':' + targetPort + '\r\n' + auth + '\r\n');
-    });
+    var parsed = new URL(targetUrl);
+    var socket = new net.Socket();
 
-    var connectBuffer = '';
-    var connected = false;
-
-    sock.on('data', function(chunk) {
-      if (!connected) {
-        connectBuffer += chunk.toString('utf8');
-        if (connectBuffer.indexOf('\r\n\r\n') !== -1) {
-          if (connectBuffer.indexOf('200') === -1) {
-            sock.destroy();
-            return reject(new Error('proxy CONNECT failed: ' + connectBuffer.split('\r\n')[0]));
-          }
-          connected = true;
-
-          // Upgrade to TLS
-          var tls = require('tls');
-          var tlsSock = tls.connect({
-            socket: sock,
-            servername: targetHost,
-            rejectUnauthorized: false,
-          }, function() {
-            var path = parsed.pathname + (parsed.search || '');
-            tlsSock.write(
-              'GET ' + path + ' HTTP/1.1\r\n' +
-              'Host: ' + targetHost + '\r\n' +
-              'User-Agent: ' + ua + '\r\n' +
-              'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\r\n' +
-              'Accept-Language: en-US,en;q=0.9\r\n' +
-              'Accept-Encoding: identity\r\n' +
-              'Connection: close\r\n\r\n'
-            );
-          });
-
-          var response = Buffer.alloc(0);
-          tlsSock.on('data', function(d) { response = Buffer.concat([response, d]); });
-          tlsSock.on('end', function() {
-            var raw = response.toString('utf8');
-            var sep = raw.indexOf('\r\n\r\n');
-            var body = sep !== -1 ? raw.substring(sep + 4) : raw;
-            // Handle chunked transfer encoding
-            if (/Transfer-Encoding:\s*chunked/i.test(raw.substring(0, sep))) {
-              body = decodeChunked(body);
-            }
-            resolve(body);
-          });
-          tlsSock.on('error', reject);
-        }
+    socket.connect(PROXY_PORT, PROXY_HOST, function() {
+      var hasAuth = PROXY_USER && PROXY_PASS;
+      if (hasAuth) {
+        socket.write(Buffer.from([0x05, 0x02, 0x00, 0x02])); // version 5, 2 methods: no-auth + user/pass
+      } else {
+        socket.write(Buffer.from([0x05, 0x01, 0x00])); // version 5, 1 method: no-auth
       }
     });
 
-    sock.on('error', reject);
-    sock.setTimeout(15000, function() { sock.destroy(); reject(new Error('proxy timeout')); });
+    var step = 0;
+
+    socket.on('data', function(chunk) {
+      if (step === 0) {
+        // SOCKS5 method selection response
+        if (chunk[0] !== 0x05) { clearTimeout(timeout); socket.destroy(); return reject(new Error('Not SOCKS5')); }
+        if (chunk[1] === 0x02) {
+          // Server wants user/pass auth
+          var userBuf = Buffer.from(PROXY_USER);
+          var passBuf = Buffer.from(PROXY_PASS);
+          var authBuf = Buffer.alloc(3 + userBuf.length + passBuf.length);
+          authBuf[0] = 0x01;
+          authBuf[1] = userBuf.length;
+          userBuf.copy(authBuf, 2);
+          authBuf[2 + userBuf.length] = passBuf.length;
+          passBuf.copy(authBuf, 3 + userBuf.length);
+          socket.write(authBuf);
+          step = 1;
+        } else if (chunk[1] === 0x00) {
+          // No auth required, go to CONNECT
+          sendSocksConnect(socket, parsed.hostname, parseInt(parsed.port || '443'));
+          step = 2;
+        } else {
+          clearTimeout(timeout); socket.destroy(); reject(new Error('Auth method rejected'));
+        }
+      } else if (step === 1) {
+        // Auth response
+        if (chunk[1] !== 0x00) { clearTimeout(timeout); socket.destroy(); return reject(new Error('Auth failed')); }
+        sendSocksConnect(socket, parsed.hostname, parseInt(parsed.port || '443'));
+        step = 2;
+      } else if (step === 2) {
+        // CONNECT response
+        if (chunk[1] !== 0x00) { clearTimeout(timeout); socket.destroy(); return reject(new Error('Connect failed: ' + chunk[1])); }
+
+        // Upgrade to TLS through the SOCKS5 tunnel
+        var tls = require('tls');
+        var tlsSocket = tls.connect({ socket: socket, servername: parsed.hostname }, function() {
+          var req = 'GET ' + parsed.pathname + (parsed.search || '') + ' HTTP/1.1\r\n' +
+            'Host: ' + parsed.hostname + '\r\n' +
+            'User-Agent: ' + (ua || getRandomUA()) + '\r\n' +
+            'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8\r\n' +
+            'Accept-Language: en-US,en;q=0.9,fr;q=0.8\r\n' +
+            'Accept-Encoding: identity\r\n' +
+            'Sec-Ch-Ua: "Chromium";v="125", "Not(A:Brand";v="24"\r\n' +
+            'Sec-Ch-Ua-Mobile: ?0\r\n' +
+            'Sec-Ch-Ua-Platform: "Windows"\r\n' +
+            'Sec-Fetch-Dest: document\r\n' +
+            'Sec-Fetch-Mode: navigate\r\n' +
+            'Sec-Fetch-Site: none\r\n' +
+            'Sec-Fetch-User: ?1\r\n' +
+            'Upgrade-Insecure-Requests: 1\r\n' +
+            'Connection: close\r\n\r\n';
+          tlsSocket.write(req);
+        });
+
+        var responseData = '';
+        tlsSocket.on('data', function(d) { responseData += d.toString(); });
+        tlsSocket.on('end', function() {
+          clearTimeout(timeout);
+          var bodyStart = responseData.indexOf('\r\n\r\n');
+          if (bodyStart === -1) return resolve(responseData);
+          var headers = responseData.substring(0, bodyStart);
+          var body = responseData.slice(bodyStart + 4);
+          // Handle chunked transfer encoding
+          if (/Transfer-Encoding:\s*chunked/i.test(headers)) {
+            body = decodeChunked(body);
+          }
+          resolve(body);
+        });
+        tlsSocket.on('error', function(e) { clearTimeout(timeout); reject(e); });
+        step = 3;
+      }
+    });
+
+    socket.on('error', function(e) { clearTimeout(timeout); reject(e); });
+    socket.on('timeout', function() { clearTimeout(timeout); socket.destroy(); reject(new Error('Socket timeout')); });
+    socket.setTimeout(25000);
   });
+}
+
+function sendSocksConnect(socket, host, port) {
+  var hostBuf = Buffer.from(host);
+  var buf = Buffer.alloc(7 + hostBuf.length);
+  buf[0] = 0x05; // version
+  buf[1] = 0x01; // CONNECT command
+  buf[2] = 0x00; // reserved
+  buf[3] = 0x03; // address type: domain
+  buf[4] = hostBuf.length;
+  hostBuf.copy(buf, 5);
+  buf.writeUInt16BE(port, 5 + hostBuf.length);
+  socket.write(buf);
 }
 
 function decodeChunked(body) {
