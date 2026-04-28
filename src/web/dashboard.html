@@ -302,7 +302,7 @@ function makeChart(id,cfg){var ctx=document.getElementById(id);if(!ctx)return nu
 var DASH_MODE='today';
 function loadDash(){
 var h='<div class="filters">';
-['today','yesterday','7d','30d'].forEach(function(m){var labels={today:'Aujourd\'hui',yesterday:'Hier','7d':'7 jours','30d':'30 jours'};h+='<button class="btn-sm '+(DASH_MODE===m?'':'btn-off')+'" onclick="DASH_MODE=\''+m+'\';loadDashData()">'+labels[m]+'</button>'});
+['today','yesterday','7d','30d','all'].forEach(function(m){var labels={today:'Aujourd\'hui',yesterday:'Hier','7d':'7 jours','30d':'30 jours','all':'Depuis toujours'};h+='<button class="btn-sm '+(DASH_MODE===m?'':'btn-off')+'" onclick="DASH_MODE=\''+m+'\';loadDashData()">'+labels[m]+'</button>'});
 h+='<input type="date" id="dashDate" value="'+dDate(0)+'">';
 h+='<button class="btn-sm btn-off" onclick="DASH_MODE=\'custom\';loadDashData()">Charger</button>';
 h+='</div><div id="dashArea"><p style="color:var(--text3);text-align:center;padding:60px">Chargement...</p></div>';
@@ -310,6 +310,7 @@ document.getElementById('content').innerHTML=h;loadDashData()}
 
 function loadDashData(){
 destroyCharts();
+if(DASH_MODE==='all'){loadAllTimeDash();return}
 if(DASH_MODE==='7d'||DASH_MODE==='30d'){loadMultiDay(DASH_MODE==='7d'?7:30);return}
 var date=DASH_MODE==='yesterday'?dDate(-1):DASH_MODE==='custom'?(document.getElementById('dashDate')||{}).value||dDate(0):dDate(0);
 af('/api/stats/'+date).then(function(d){
@@ -365,6 +366,51 @@ document.getElementById('dashArea').innerHTML=h;
 var labels=daily.map(function(x){return x.date.slice(5)});
 makeChart('viewsLine',{type:'line',data:{labels:labels,datasets:[{label:'Vues',data:daily.map(function(x){return x.views}),borderColor:'#7c3aed',backgroundColor:'rgba(124,58,237,0.1)',fill:true,tension:0.4,pointRadius:3,pointBackgroundColor:'#7c3aed'}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{display:false},ticks:{color:'#64748b',font:{size:10}}},y:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'#64748b'}}}}});
 makeChart('engLine',{type:'line',data:{labels:labels,datasets:[{label:'Engagement %',data:daily.map(function(x){return+x.eng.toFixed(2)}),borderColor:'#10b981',backgroundColor:'rgba(16,185,129,0.1)',fill:true,tension:0.4,pointRadius:3,pointBackgroundColor:'#10b981'}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{display:false},ticks:{color:'#64748b',font:{size:10}}},y:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'#64748b'}}}}})})}
+
+// All-time view: same VA leaderboard as daily but aggregated since the very first post.
+function loadAllTimeDash(){
+  destroyCharts();
+  af('/api/all-time-stats').then(function(d){
+    var s=d.summaries.map(function(x){
+      var tv=Number(x.total_views),tl=Number(x.total_likes),tc=Number(x.total_comments),ts=Number(x.total_shares||0),pc=Number(x.post_count);
+      x.avg_views=pc>0?Math.round(tv/pc):0;
+      x.total_score=tl+tc*3+ts*5;
+      x.engagement_rate=tv>0?((tl+tc)/tv*100).toFixed(1):'0.0';
+      x.badge=x.avg_views>=2000?'top':x.avg_views>=500?'bon':'faible';
+      return x;
+    }).sort(function(a,b){return Number(b.total_views)-Number(a.total_views)});
+    var tv=0,tl=0,tc=0,ts=0,tp=0,tsc=0;
+    s.forEach(function(x){tv+=Number(x.total_views);tl+=Number(x.total_likes);tc+=Number(x.total_comments);ts+=Number(x.total_shares||0);tp+=Number(x.post_count);tsc+=x.total_score});
+    var avgEng=tv>0?((tl+tc)/tv*100).toFixed(1):'0.0';
+    var commLabel=PLAT==='twitter'?'Replies':'Comm.';
+    var rtLabel=PLAT==='twitter'?'Retweets':'Repub.';
+    var h='<div class="sec-title">'+platEmoji()+' '+platLabel()+' — Depuis toujours</div>';
+    h+='<div class="kpis">';
+    h+=kpi('👥',''+s.length,'VA actifs','','purple');
+    h+=kpi('📝',''+tp,'Posts','','blue');
+    h+=kpi('👁️',fm(tv),'Vues','','purple');
+    h+=kpi('❤️',fm(tl),'Likes','','pink');
+    h+=kpi('💬',fm(tc),commLabel,'','blue');
+    h+=kpi(PLAT==='twitter'?'🔁':'🔄',fm(ts),rtLabel,'','purple');
+    h+=kpi('🏆',fm(tsc),'Score','L+C×3+S×5','orange');
+    h+=kpi('📊',avgEng+'%','Engagement','','green');
+    h+='</div>';
+
+    if(s.length>0){var best=s[0];h+='<div class="card" style="border-left:2px solid var(--green)"><div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:16px"><div><div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Meilleur VA all-time</div><div style="font-size:20px;font-weight:800">'+best.va_name+' '+vaBadge(best.badge)+'</div><div style="color:var(--text3);font-size:12px;margin-top:4px">'+best.post_count+' posts · Score '+fm(best.total_score)+' · Eng. '+best.engagement_rate+'%</div></div><div style="display:flex;gap:20px"><div style="text-align:center"><div style="font-size:24px;font-weight:800;color:var(--purple)">'+fm(Number(best.total_views))+'</div><div style="font-size:9px;color:var(--text3);text-transform:uppercase">vues</div></div><div style="text-align:center"><div style="font-size:24px;font-weight:800;color:var(--accent)">'+fm(Number(best.total_likes))+'</div><div style="font-size:9px;color:var(--text3);text-transform:uppercase">likes</div></div></div></div></div>'}
+
+    h+='<div class="card"><h3><span class="dot"></span>Tableau detaille (depuis toujours)</h3><table class="tbl"><thead><tr><th>#</th><th>VA</th><th>Badge</th><th>Posts</th><th>Vues</th><th>Likes</th><th>'+commLabel+'</th><th>'+rtLabel+'</th><th>Score</th><th>Eng.</th><th>Moy/p</th></tr></thead><tbody>';
+    s.forEach(function(x,i){
+      var m=i<3?['🥇','🥈','🥉'][i]:''+(i+1);
+      var pc=Number(x.post_count);
+      var avg=pc>0?fm(Math.round(Number(x.total_views)/pc)):'0';
+      h+='<tr onclick="openVA(\''+x.va_discord_id+'\',\''+x.va_name+'\')"><td>'+m+'</td><td><b>'+x.va_name+'</b></td><td>'+vaBadge(x.badge)+'</td><td>'+pc+'</td><td>'+fm(Number(x.total_views))+'</td><td>'+fm(Number(x.total_likes))+'</td><td>'+fm(Number(x.total_comments))+'</td><td>'+fm(Number(x.total_shares||0))+'</td><td style="color:var(--orange);font-weight:700">'+fm(x.total_score)+'</td><td>'+x.engagement_rate+'%</td><td>'+avg+'</td></tr>';
+    });
+    h+='</tbody></table></div>';
+    document.getElementById('dashArea').innerHTML=h;
+  }).catch(function(e){
+    document.getElementById('dashArea').innerHTML='<div class="card" style="text-align:center;padding:40px;color:var(--red)">Erreur: '+(e.message||'?')+'</div>';
+  });
+}
 
 // ==================== CLASSEMENT ====================
 function loadLB(){var h='<div class="filters"><input type="date" id="lbDate" value="'+dDate(0)+'"><button class="btn-sm" onclick="loadLBData()">Charger</button></div><div id="lbArea"></div>';document.getElementById('content').innerHTML=h;loadLBData()}
@@ -558,10 +604,20 @@ function renderRecoTier(){
 }
 
 // ==================== HEURES ====================
-function loadHeat(){destroyCharts();var h='<div class="filters"><select id="heatDays"><option value="3">3j</option><option value="7" selected>7j</option><option value="14">14j</option><option value="30">30j</option></select><button class="btn-sm" onclick="loadHeatData()">Analyser</button></div><div id="heatArea"></div>';document.getElementById('content').innerHTML=h;loadHeatData()}
+function loadHeat(){destroyCharts();var h='<div class="filters"><select id="heatDays"><option value="3">3j</option><option value="7" selected>7j</option><option value="14">14j</option><option value="30">30j</option><option value="90">90j</option><option value="all">Depuis toujours</option></select><button class="btn-sm" onclick="loadHeatData()">Analyser</button></div><div id="heatArea"></div>';document.getElementById('content').innerHTML=h;loadHeatData()}
 function loadHeatData(){destroyCharts();var days=document.getElementById('heatDays').value;af('/api/heatmap?days='+days).then(function(d){var hrs=d.hours;var maxV=Math.max.apply(null,hrs.map(function(h){return h.avg_views}).concat([1]));
-var h='<div class="sec-title">'+platEmoji()+' Heatmap '+days+'j — '+platLabel()+'</div>';
-h+='<div class="card"><h3><span class="dot"></span>Vues moyennes par heure</h3><div class="chart-wrap"><canvas id="hourlyChart"></canvas></div></div>';
+var totalPosts=Number(d.totalPosts||0);
+var periodLabel=(days==='all')?'Depuis toujours':days+'j';
+var h='<div class="sec-title">'+platEmoji()+' Heatmap '+periodLabel+' — '+platLabel()+'</div>';
+// KPIs en haut: total posts, jours analysés, heure top
+var bestHour=hrs.slice().sort(function(a,b){return b.avg_views-a.avg_views})[0];
+var bestHourTxt=(bestHour&&bestHour.post_count>0)?(bestHour.hour+'h'):'—';
+h+='<div class="kpis">';
+h+=kpi('📝',fm(totalPosts),'Posts analyses','','blue');
+h+=kpi('📆',periodLabel,'Periode','','purple');
+h+=kpi('🏆',bestHourTxt,'Meilleure heure',bestHour?fm(bestHour.avg_views)+' vues moy.':'','green');
+h+='</div>';
+h+='<div class="card"><h3><span class="dot"></span>Vues moyennes par heure (heure Benin)</h3><div class="chart-wrap"><canvas id="hourlyChart"></canvas></div></div>';
 h+='<div class="card"><h3><span class="dot"></span>Grille horaire</h3><div style="display:grid;grid-template-columns:repeat(12,1fr);gap:5px;margin-top:12px">';
 for(var i=0;i<24;i++){var dd=hrs[i];var intensity=maxV>0?dd.avg_views/maxV:0;var col=dd.post_count===0?'var(--bg3)':intensity>=0.7?'rgba(16,185,129,'+Math.max(0.3,intensity)+')':intensity>=0.3?'rgba(245,158,11,'+Math.max(0.3,intensity)+')':'rgba(239,68,68,'+Math.max(0.2,intensity*2)+')';h+='<div style="background:'+col+';border-radius:8px;padding:12px 6px;text-align:center;border:1px solid var(--border)"><div style="font-weight:800;font-size:13px">'+i+'h</div><div style="font-size:10px;color:var(--text2);margin-top:3px">'+fm(dd.avg_views)+'</div><div style="font-size:8px;color:var(--text3)">'+dd.post_count+'p</div></div>'}
 h+='</div></div>';
@@ -569,7 +625,7 @@ document.getElementById('heatArea').innerHTML=h;
 makeChart('hourlyChart',{type:'bar',data:{labels:hrs.map(function(h){return h.hour+'h'}),datasets:[{label:'Vues moy.',data:hrs.map(function(h){return h.avg_views}),backgroundColor:hrs.map(function(h){return h.post_count===0?'rgba(255,255,255,0.05)':h.avg_views>=maxV*0.7?'rgba(16,185,129,0.7)':h.avg_views>=maxV*0.3?'rgba(245,158,11,0.6)':'rgba(239,68,68,0.5)'}),borderRadius:4,borderSkipped:false}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{display:false},ticks:{color:'#64748b',font:{size:9}}},y:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'#64748b'}}}}})})}
 
 // ==================== EVOLUTION (NEW — line charts over time) ====================
-function loadEvolution(){destroyCharts();var h='<div class="filters"><select id="evoDays"><option value="7">7 jours</option><option value="14" selected>14 jours</option><option value="30">30 jours</option></select><button class="btn-sm" onclick="loadEvoData()">Charger</button></div><div id="evoArea"><p style="color:var(--text3);text-align:center;padding:60px">Chargement...</p></div>';document.getElementById('content').innerHTML=h;loadEvoData()}
+function loadEvolution(){destroyCharts();var h='<div class="filters"><select id="evoDays"><option value="7">7 jours</option><option value="14" selected>14 jours</option><option value="30">30 jours</option><option value="60">60 jours</option><option value="90">90 jours</option></select><button class="btn-sm" onclick="loadEvoData()">Charger</button></div><div id="evoArea"><p style="color:var(--text3);text-align:center;padding:60px">Chargement...</p></div>';document.getElementById('content').innerHTML=h;loadEvoData()}
 function loadEvoData(){destroyCharts();var days=document.getElementById('evoDays').value;af('/api/history/'+days).then(function(d){
 var daily=d.history.map(function(x){var tv=x.summaries.reduce(function(a,b){return a+Number(b.total_views)},0);var tl=x.summaries.reduce(function(a,b){return a+Number(b.total_likes)},0);var tc=x.summaries.reduce(function(a,b){return a+Number(b.total_comments)},0);var tp=x.summaries.reduce(function(a,b){return a+Number(b.post_count)},0);return{date:x.date,views:tv,likes:tl,comments:tc,posts:tp,eng:tv>0?(tl+tc)/tv*100:0,score:tl+tc*3,summaries:x.summaries}}).reverse();
 var labels=daily.map(function(x){return x.date.slice(5)});
