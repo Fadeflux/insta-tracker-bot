@@ -789,12 +789,37 @@ function renderRecoTier(){
 }
 
 // ==================== HEURES ====================
-function loadHeat(){destroyCharts();var h='<div class="filters"><select id="heatDays"><option value="3">3j</option><option value="7" selected>7j</option><option value="14">14j</option><option value="30">30j</option><option value="90">90j</option><option value="all">Depuis toujours</option></select><button class="btn-sm" onclick="loadHeatData()">Analyser</button></div><div id="heatArea"></div>';document.getElementById('content').innerHTML=h;loadHeatData()}
-function loadHeatData(){destroyCharts();var days=document.getElementById('heatDays').value;af('/api/heatmap?days='+days).then(function(d){var hrs=d.hours;var maxV=Math.max.apply(null,hrs.map(function(h){return h.avg_views}).concat([1]));
+function loadHeat(){
+  destroyCharts();
+  if(!window.HEAT_PERIOD)window.HEAT_PERIOD='7';
+  var periods=[
+    {k:'3',l:'3 jours'},
+    {k:'7',l:'7 jours'},
+    {k:'15',l:'15 jours'},
+    {k:'30',l:'30 jours'},
+    {k:'90',l:'90 jours'},
+    {k:'all',l:'Depuis toujours'}
+  ];
+  var h='<div class="filters" style="flex-wrap:wrap;gap:8px;align-items:center">';
+  periods.forEach(function(p){
+    var active=(window.HEAT_PERIOD===p.k);
+    h+='<button class="btn-sm '+(active?'':'btn-off')+'" onclick="setHeatPeriod(\''+p.k+'\')">'+p.l+'</button>';
+  });
+  h+='</div><div id="heatArea"></div>';
+  document.getElementById('content').innerHTML=h;
+  loadHeatData();
+}
+
+function setHeatPeriod(p){
+  window.HEAT_PERIOD=p;
+  loadHeat();
+}
+
+function loadHeatData(){destroyCharts();var days=window.HEAT_PERIOD||'7';af('/api/heatmap?days='+days).then(function(d){var hrs=d.hours;var maxV=Math.max.apply(null,hrs.map(function(h){return h.avg_views}).concat([1]));
 var totalPosts=Number(d.totalPosts||0);
-var periodLabel=(days==='all')?'Depuis toujours':days+'j';
-var h='<div class="sec-title">'+platEmoji()+' Heatmap '+periodLabel+' — '+platLabel()+'</div>';
-// KPIs en haut: total posts, jours analysés, heure top
+var periodLabel=(days==='all')?'Depuis toujours':days+' derniers jours';
+var h='<div class="sec-title">'+platEmoji()+' Heatmap — '+periodLabel+' — '+platLabel()+'</div>';
+// KPIs en haut: total posts, période analysée, heure top
 var bestHour=hrs.slice().sort(function(a,b){return b.avg_views-a.avg_views})[0];
 var bestHourTxt=(bestHour&&bestHour.post_count>0)?(bestHour.hour+'h'):'—';
 h+='<div class="kpis">';
@@ -808,6 +833,7 @@ for(var i=0;i<24;i++){var dd=hrs[i];var intensity=maxV>0?dd.avg_views/maxV:0;var
 h+='</div></div>';
 document.getElementById('heatArea').innerHTML=h;
 makeChart('hourlyChart',{type:'bar',data:{labels:hrs.map(function(h){return h.hour+'h'}),datasets:[{label:'Vues moy.',data:hrs.map(function(h){return h.avg_views}),backgroundColor:hrs.map(function(h){return h.post_count===0?'rgba(255,255,255,0.05)':h.avg_views>=maxV*0.7?'rgba(16,185,129,0.7)':h.avg_views>=maxV*0.3?'rgba(245,158,11,0.6)':'rgba(239,68,68,0.5)'}),borderRadius:4,borderSkipped:false}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{display:false},ticks:{color:'#64748b',font:{size:9}}},y:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'#64748b'}}}}})})}
+
 
 // ==================== GLOBAL (NEW — combined IG + Twitter) ====================
 function loadGlobal(){destroyCharts();
@@ -1367,7 +1393,7 @@ fetch(A+'/api/accounts/'+id+'/status',{method:'POST',headers:{'Content-Type':'ap
 .then(function(r){return r.json()}).then(function(d){if(d.success)loadAccountsData();else alert(d.error||'Erreur')}).catch(function(e){alert(e.message)})}
 
 function sweepInactive(){
-if(!confirm('Lancer un sweep des comptes inactifs maintenant ? Les comptes sans post depuis 7j seront marques inactifs.'))return;
+if(!confirm('Lancer un sweep des comptes inactifs maintenant ? Les comptes sans post depuis 3j seront marques inactifs.'))return;
 fetch(A+'/api/accounts/sweep-inactive',{method:'POST',headers:{'Content-Type':'application/json','X-Auth-Token':T},body:JSON.stringify({})})
 .then(function(r){return r.json()}).then(function(d){if(d.success){alert(d.flipped+' compte(s) marque(s) inactif(s).');loadAccountsData()}else alert(d.error||'Erreur')}).catch(function(e){alert(e.message)})}
 
