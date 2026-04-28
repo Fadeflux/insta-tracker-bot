@@ -111,6 +111,17 @@ DO $$ BEGIN
     ALTER TABLE posts ADD COLUMN late_alert_sent BOOLEAN DEFAULT FALSE;
   END IF;
 
+  -- Drop and recreate the accounts.platform CHECK constraint to allow 'threads'.
+  -- Older deployments created the table without 'threads' in the allowed list.
+  IF EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE table_name = 'accounts' AND constraint_name = 'accounts_platform_check'
+  ) THEN
+    ALTER TABLE accounts DROP CONSTRAINT accounts_platform_check;
+    ALTER TABLE accounts ADD CONSTRAINT accounts_platform_check
+      CHECK (platform IN ('instagram', 'twitter', 'geelark', 'threads'));
+  END IF;
+
 END $$;
 
 -- Idempotency table for slot reminders (prevents double-sending if cron fires twice)
@@ -188,7 +199,7 @@ END $$;
 CREATE TABLE IF NOT EXISTS accounts (
   id            SERIAL PRIMARY KEY,
   username      VARCHAR(128) NOT NULL,
-  platform      VARCHAR(16) NOT NULL CHECK (platform IN ('instagram', 'twitter', 'geelark')),
+  platform      VARCHAR(16) NOT NULL CHECK (platform IN ('instagram', 'twitter', 'geelark', 'threads')),
   va_discord_id VARCHAR(32),
   va_name       VARCHAR(128),
   status        VARCHAR(16) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
