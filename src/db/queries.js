@@ -582,48 +582,106 @@ async function getNuggets(date, platform) {
   return result.rows;
 }
 
-async function getRecommendations(date, platform) {
-  var repostSql, repostParams;
-  if (platform) {
-    repostSql = "SELECT p.id, p.ig_post_id, p.url, p.va_name, p.caption, p.platform, s.views, s.likes, s.comments, s.shares FROM posts p LEFT JOIN LATERAL (SELECT views, likes, comments, shares FROM snapshots sn WHERE sn.post_id = p.id ORDER BY sn.scraped_at DESC LIMIT 1) s ON true WHERE p.deleted_at IS NULL AND p.created_at::date = $1 AND p.platform = $3 AND COALESCE(s.views, 0) >= $2 ORDER BY COALESCE(s.views, 0) DESC LIMIT 10";
-    repostParams = [date, BON_VIEWS, platform];
+// getRecommendations accepts either:
+//   - a single date string "YYYY-MM-DD" (legacy: single day analysis)
+//   - a period object { from: "YYYY-MM-DD" | null, to: "YYYY-MM-DD" }
+//     where from = null means "since beginning"
+async function getRecommendations(dateOrPeriod, platform) {
+  // Determine the date filter clauses
+  var fromDate, toDate;
+  var isPeriod = dateOrPeriod && typeof dateOrPeriod === 'object' && 'to' in dateOrPeriod;
+  if (isPeriod) {
+    fromDate = dateOrPeriod.from || null; // null = since forever
+    toDate = dateOrPeriod.to;
   } else {
-    repostSql = "SELECT p.id, p.ig_post_id, p.url, p.va_name, p.caption, p.platform, s.views, s.likes, s.comments, s.shares FROM posts p LEFT JOIN LATERAL (SELECT views, likes, comments, shares FROM snapshots sn WHERE sn.post_id = p.id ORDER BY sn.scraped_at DESC LIMIT 1) s ON true WHERE p.created_at::date = $1 AND COALESCE(s.views, 0) >= $2 ORDER BY COALESCE(s.views, 0) DESC LIMIT 10";
-    repostParams = [date, BON_VIEWS];
+    // Legacy single-day mode
+    fromDate = dateOrPeriod;
+    toDate = dateOrPeriod;
+  }
+
+  // Build SQL date filter — supports null (no lower bound = since forever)
+  function buildDateFilter(prefix, paramOffset) {
+    // prefix: "p." or "" depending on table alias
+    if (fromDate && toDate) {
+      return {
+        clause: prefix + 'created_at::date >= $' + paramOffset + ' AND ' + prefix + 'created_at::date <= $' + (paramOffset + 1),
+        params: [fromDate, toDate],
+      };
+    } else if (toDate) {
+      return {
+        clause: prefix + 'created_at::date <= $' + paramOffset,
+        params: [toDate],
+      };
+    }
+    return { clause: '1=1', params: [] };
+  }
+
+  // === REPOSTS: posts that performed well enough to be reposted ===
+  var repostSql, repostParams;
+  var df = buildDateFilter('p.', 1);
+  if (platform) {
+    repostSql = "SELECT p.id, p.ig_post_id, p.url, p.va_name, p.caption, p.platform, p.created_at, s.views, s.likes, s.comments, s.shares FROM posts p LEFT JOIN LATERAL (SELECT views, likes, comments, shares FROM snapshots sn WHERE sn.post_id = p.id ORDER BY sn.scraped_at DESC LIMIT 1) s ON true WHERE p.deleted_at IS NULL AND " + df.clause + " AND p.platform = $" + (df.params.length + 1) + " AND COALESCE(s.views, 0) >= $" + (df.params.length + 2) + " ORDER BY COALESCE(s.views, 0) DESC LIMIT 30";
+    repostParams = df.params.concat([platform, BON_VIEWS]);
+  } else {
+    repostSql = "SELECT p.id, p.ig_post_id, p.url, p.va_name, p.caption, p.platform, p.created_at, s.views, s.likes, s.comments, s.shares FROM posts p LEFT JOIN LATERAL (SELECT views, likes, comments, shares FROM snapshots sn WHERE sn.post_id = p.id ORDER BY sn.scraped_at DESC LIMIT 1) s ON true WHERE p.deleted_at IS NULL AND " + df.clause + " AND COALESCE(s.views, 0) >= $" + (df.params.length + 1) + " ORDER BY COALESCE(s.views, 0) DESC LIMIT 30";
+    repostParams = df.params.concat([BON_VIEWS]);
   }
   var repost = await pool.query(repostSql, repostParams);
 
-  var summaries = await getDailySummaries(date, platform);
-  var totalAvg = 0;
-  if (summaries.length > 0) {
-    var totalViews = summaries.reduce(function(a, b) { return a + Number(b.total_views); }, 0);
-    totalAvg = totalViews / summaries.length;
+  // === DISTRIBUTION: count posts per perf tier (viral / bon / moyen / flop) ===
+  var allPostsParams, allPostsSql;
+  var df2 = buildDateFilter('p.', 1);
+  if (platform) {
+    allPostsSql = "SELECT p.id, p.ig_post_id, p.url, p.va_name, p.va_discord_id, p.caption, p.platform, p.created_at, s.views, s.likes, s.comments, s.shares FROM posts p LEFT JOIN LATERAL (SELECT views, likes, comments, shares FROM snapshots sn WHERE sn.post_id = p.id ORDER BY sn.scraped_at DESC LIMIT 1) s ON true WHERE p.deleted_at IS NULL AND " + df2.clause + " AND p.platform = $" + (df2.params.length + 1) + " ORDER BY COALESCE(s.views, 0) DESC";
+    allPostsParams = df2.params.concat([platform]);
+  } else {
+    allPostsSql = "SELECT p.id, p.ig_post_id, p.url, p.va_name, p.va_discord_id, p.caption, p.platform, p.created_at, s.views, s.likes, s.comments, s.shares FROM posts p LEFT JOIN LATERAL (SELECT views, likes, comments, shares FROM snapshots sn WHERE sn.post_id = p.id ORDER BY sn.scraped_at DESC LIMIT 1) s ON true WHERE p.deleted_at IS NULL AND " + df2.clause + " ORDER BY COALESCE(s.views, 0) DESC";
+    allPostsParams = df2.params;
   }
-  var underperformers = summaries.filter(function(s) { return Number(s.total_views) < totalAvg * 0.5; });
-  var topPerformers = summaries.filter(function(s) { return Number(s.total_views) >= totalAvg * 1.5; });
-
-  var allPostsWhere = platform
-    ? "WHERE p.deleted_at IS NULL AND p.created_at::date = $1 AND p.platform = $2"
-    : "WHERE p.created_at::date = $1";
-  var allPostsParams = platform ? [date, platform] : [date];
-  var allPostsSql = "SELECT p.id, p.performance, s.views FROM posts p LEFT JOIN LATERAL (SELECT views FROM snapshots sn WHERE sn.post_id = p.id ORDER BY sn.scraped_at DESC LIMIT 1) s ON true " + allPostsWhere;
+  // Cap at 1000 to avoid OOM on long periods. Very rare to exceed in practice.
+  allPostsSql += " LIMIT 1000";
   var allPosts = await pool.query(allPostsSql, allPostsParams);
   var totalPosts = allPosts.rows.length;
+
+  // Categorize each post by performance tier and keep them in lists
   var perfCount = { viral: 0, bon: 0, moyen: 0, flop: 0 };
+  var postsByTier = { viral: [], bon: [], moyen: [], flop: [] };
   allPosts.rows.forEach(function(p) {
     var v = Number(p.views) || 0;
     var perf = v >= VIRAL_VIEWS ? 'viral' : v >= BON_VIEWS ? 'bon' : v >= MOYEN_VIEWS ? 'moyen' : 'flop';
     perfCount[perf]++;
+    postsByTier[perf].push(p);
   });
   var pctPerf = totalPosts > 0 ? Math.round((perfCount.viral + perfCount.bon) / totalPosts * 100) : 0;
   var pctFlop = totalPosts > 0 ? Math.round(perfCount.flop / totalPosts * 100) : 0;
   var toRepost = perfCount.viral + perfCount.bon;
 
-  var nuggets = await getNuggets(date, platform);
+  // === NUGGETS: for short periods (<=2 days), take from getNuggets; for long
+  // periods, just take the top viral/bon posts.
+  var nuggets;
+  if (isPeriod) {
+    nuggets = postsByTier.viral.concat(postsByTier.bon).slice(0, 50);
+  } else {
+    nuggets = await getNuggets(toDate, platform);
+  }
+
+  // === Underperformers / topPerformers (only for single-day mode) ===
+  var underperformers = [];
+  var topPerformers = [];
+  if (!isPeriod) {
+    var summaries = await getDailySummaries(toDate, platform);
+    if (summaries.length > 0) {
+      var totalViewsSum = summaries.reduce(function(a, b) { return a + Number(b.total_views); }, 0);
+      var avgVa = totalViewsSum / summaries.length;
+      underperformers = summaries.filter(function(s) { return Number(s.total_views) < avgVa * 0.5; });
+      topPerformers = summaries.filter(function(s) { return Number(s.total_views) >= avgVa * 1.5; });
+    }
+  }
 
   return {
     postsToRepost: repost.rows,
     nuggets: nuggets,
+    postsByTier: postsByTier,  // NEW: full lists per tier for clickable distribution
     underperformers: underperformers,
     topPerformers: topPerformers,
     kpis: { totalPosts: totalPosts, perfCount: perfCount, pctPerf: pctPerf, pctFlop: pctFlop, toRepost: toRepost },
