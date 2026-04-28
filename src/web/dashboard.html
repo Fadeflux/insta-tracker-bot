@@ -334,10 +334,7 @@ h+=kpi('📊',avgEng+'%','Engagement','','green');
 h+=kpi('🎯',pct6+'%','Objectif 6p',obj6+'/'+s.length,'green');
 h+='</div>';
 
-h+='<div style="display:grid;grid-template-columns:280px 1fr;gap:16px;margin-bottom:16px">';
-h+='<div class="card"><h3><span class="dot"></span>Completion</h3>'+gauge(pct6)+'<div style="text-align:center;font-size:11px;color:var(--text3);margin-top:4px">'+obj6+'/'+s.length+' VA a 6+ posts</div></div>';
-h+='<div class="card"><h3><span class="dot"></span>Vues par VA</h3><div class="chart-wrap"><canvas id="vaBarChart"></canvas></div></div>';
-h+='</div>';
+h+='<div class="card" style="margin-bottom:16px"><h3><span class="dot"></span>Vues par VA</h3><div class="chart-wrap"><canvas id="vaBarChart"></canvas></div></div>';
 
 if(s.length>0){var best=s[0];h+='<div class="card" style="border-left:2px solid var(--green)"><div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:16px"><div><div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Meilleur VA</div><div style="font-size:20px;font-weight:800">'+best.va_name+' '+vaBadge(best.badge)+'</div><div style="color:var(--text3);font-size:12px;margin-top:4px">'+best.post_count+' posts · Score '+fm(best.total_score)+' · Eng. '+best.engagement_rate+'%</div></div><div style="display:flex;gap:20px"><div style="text-align:center"><div style="font-size:24px;font-weight:800;color:var(--purple)">'+fm(Number(best.total_views))+'</div><div style="font-size:9px;color:var(--text3);text-transform:uppercase">vues</div></div><div style="text-align:center"><div style="font-size:24px;font-weight:800;color:var(--accent)">'+fm(Number(best.total_likes))+'</div><div style="font-size:9px;color:var(--text3);text-transform:uppercase">likes</div></div></div></div></div>'}
 
