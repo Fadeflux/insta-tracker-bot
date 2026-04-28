@@ -460,11 +460,133 @@ function loadAllTimeDash(){
 }
 
 // ==================== CLASSEMENT ====================
-function loadLB(){var h='<div class="filters"><input type="date" id="lbDate" value="'+dDate(0)+'"><button class="btn-sm" onclick="loadLBData()">Charger</button></div><div id="lbArea"></div>';document.getElementById('content').innerHTML=h;loadLBData()}
-function loadLBData(){af('/api/leaderboard?date='+(document.getElementById('lbDate').value)).then(function(d){var r=d.rankings;var h='<div class="sec-title">'+platEmoji()+' Classement '+platLabel()+'</div>';
-h+='<div class="card"><table class="tbl"><thead><tr><th>#</th><th>VA</th><th>Badge</th><th>Posts</th><th>Vues</th><th>Likes</th><th>Score</th><th>Eng.</th></tr></thead><tbody>';
-r.forEach(function(x,i){var m=i<3?['🥇','🥈','🥉'][i]:''+(i+1);var cls=Number(x.post_count)>=6?'ok':'warn';h+='<tr onclick="openVA(\''+x.va_discord_id+'\',\''+x.va_name+'\')"><td>'+m+'</td><td><b>'+x.va_name+'</b></td><td>'+vaBadge(x.badge)+'</td><td class="'+cls+'">'+x.post_count+'/6</td><td>'+fm(Number(x.total_views))+'</td><td>'+fm(Number(x.total_likes))+'</td><td style="color:var(--orange);font-weight:700">'+fm(x.total_score)+'</td><td>'+x.engagement_rate+'%</td></tr>'});
-h+='</tbody></table></div>';document.getElementById('lbArea').innerHTML=h})}
+function loadLB(){
+  // Period buttons (like Dashboard / Recommandations)
+  if(!window.LB_PERIOD)window.LB_PERIOD='today';
+  var periods=[
+    {k:'today',l:'Aujourd\'hui'},
+    {k:'yesterday',l:'Hier'},
+    {k:'7d',l:'7 jours'},
+    {k:'15d',l:'15 jours'},
+    {k:'30d',l:'30 jours'},
+    {k:'all',l:'Depuis toujours'}
+  ];
+  var h='<div class="filters" style="flex-wrap:wrap;gap:8px;align-items:center">';
+  periods.forEach(function(p){
+    var active=(window.LB_PERIOD===p.k);
+    h+='<button class="btn-sm '+(active?'':'btn-off')+'" onclick="setLBPeriod(\''+p.k+'\')">'+p.l+'</button>';
+  });
+  h+='<button class="btn-sm '+(window.LB_PERIOD==='custom'?'':'btn-off')+'" onclick="setLBPeriod(\'custom\')">Date</button>';
+  if(window.LB_PERIOD==='custom'){
+    h+='<input type="date" id="lbDate" value="'+dDate(0)+'" style="padding:8px 12px;border-radius:8px;background:var(--bg3);color:var(--text1);border:1px solid var(--border)">';
+    h+='<button class="btn-sm" onclick="loadLBData()">Charger</button>';
+  }
+  h+='</div><div id="lbArea"></div>';
+  document.getElementById('content').innerHTML=h;
+  loadLBData();
+}
+
+function setLBPeriod(p){
+  window.LB_PERIOD=p;
+  loadLB();
+}
+
+// Builds the leaderboard from one of three sources depending on the period:
+//   - today/yesterday/custom: GET /api/leaderboard?date=YYYY-MM-DD (single day)
+//   - 7d/15d/30d:             GET /api/history/N then aggregate per VA
+//   - all:                    GET /api/all-time-stats (already aggregated server-side)
+function loadLBData(){
+  var p=window.LB_PERIOD||'today';
+  if(p==='today'||p==='yesterday'||p==='custom'){
+    var date=p==='yesterday'?dDate(-1):p==='custom'?(document.getElementById('lbDate')||{}).value||dDate(0):dDate(0);
+    af('/api/leaderboard?date='+date).then(function(d){renderLB(d.rankings, periodLabelLB(p,date))})
+      .catch(function(e){lbError(e)});
+  } else if(p==='all'){
+    af('/api/all-time-stats').then(function(d){
+      var rankings=normalizeRankings(d.summaries);
+      renderLB(rankings, 'Depuis toujours');
+    }).catch(function(e){lbError(e)});
+  } else {
+    // 7d/15d/30d: aggregate via history
+    var n=parseInt(p);
+    af('/api/history/'+n).then(function(d){
+      // Collect all per-VA totals across the days
+      var byVa={};
+      d.history.forEach(function(day){
+        day.summaries.forEach(function(s){
+          var key=s.va_discord_id;
+          if(!byVa[key]){
+            byVa[key]={
+              va_discord_id:s.va_discord_id,
+              va_name:s.va_name,
+              post_count:0,total_views:0,total_likes:0,total_comments:0,total_shares:0
+            };
+          }
+          byVa[key].post_count+=Number(s.post_count)||0;
+          byVa[key].total_views+=Number(s.total_views)||0;
+          byVa[key].total_likes+=Number(s.total_likes)||0;
+          byVa[key].total_comments+=Number(s.total_comments)||0;
+          byVa[key].total_shares+=Number(s.total_shares||0);
+        });
+      });
+      var rows=Object.values(byVa);
+      var rankings=normalizeRankings(rows);
+      renderLB(rankings, n+' derniers jours');
+    }).catch(function(e){lbError(e)});
+  }
+}
+
+// Convert raw VA rows into the same ranking shape /api/leaderboard returns.
+function normalizeRankings(rows){
+  return rows.map(function(x){
+    var tv=Number(x.total_views),tl=Number(x.total_likes),tc=Number(x.total_comments),ts=Number(x.total_shares||0),pc=Number(x.post_count);
+    var avgV=pc>0?Math.round(tv/pc):0;
+    return {
+      va_discord_id:x.va_discord_id,
+      va_name:x.va_name,
+      post_count:pc,
+      total_views:tv,
+      total_likes:tl,
+      total_comments:tc,
+      total_shares:ts,
+      total_score:tl+tc*3+ts*5,
+      engagement_rate:tv>0?((tl+tc)/tv*100).toFixed(1):'0.0',
+      badge:avgV>=2000?'top':avgV>=500?'bon':'faible',
+    };
+  }).sort(function(a,b){return b.total_score-a.total_score});
+}
+
+function periodLabelLB(p,date){
+  if(p==='today')return 'Aujourd\'hui';
+  if(p==='yesterday')return 'Hier';
+  if(p==='custom')return date;
+  return date;
+}
+
+function lbError(e){
+  document.getElementById('lbArea').innerHTML='<div class="card" style="text-align:center;padding:40px;color:var(--red)">Erreur: '+(e.message||'?')+'</div>';
+}
+
+function renderLB(rankings,label){
+  var r=rankings;
+  var h='<div class="sec-title">'+platEmoji()+' Classement '+platLabel()+' — '+escapeHtml(label||'')+'</div>';
+  if(!r||r.length===0){
+    h+='<div class="card" style="text-align:center;padding:40px;color:var(--text3)">Aucune donnee pour cette periode.</div>';
+    document.getElementById('lbArea').innerHTML=h;
+    return;
+  }
+  h+='<div class="card"><table class="tbl"><thead><tr><th>#</th><th>VA</th><th>Badge</th><th>Posts</th><th>Vues</th><th>Likes</th><th>Score</th><th>Eng.</th></tr></thead><tbody>';
+  r.forEach(function(x,i){
+    var m=i<3?['🥇','🥈','🥉'][i]:''+(i+1);
+    // For multi-day periods, "/6" doesn't make sense — only show /6 on single-day views
+    var isSingleDay=(window.LB_PERIOD==='today'||window.LB_PERIOD==='yesterday'||window.LB_PERIOD==='custom');
+    var postCol=isSingleDay?(x.post_count+'/6'):''+x.post_count;
+    var cls=isSingleDay?(Number(x.post_count)>=6?'ok':'warn'):'';
+    h+='<tr onclick="openVA(\''+x.va_discord_id+'\',\''+(x.va_name||'').replace(/\'/g,"\\'")+'\')"><td>'+m+'</td><td><b>'+escapeHtml(x.va_name||'?')+'</b></td><td>'+vaBadge(x.badge)+'</td><td class="'+cls+'">'+postCol+'</td><td>'+fm(Number(x.total_views))+'</td><td>'+fm(Number(x.total_likes))+'</td><td style="color:var(--orange);font-weight:700">'+fm(x.total_score)+'</td><td>'+x.engagement_rate+'%</td></tr>';
+  });
+  h+='</tbody></table></div>';
+  document.getElementById('lbArea').innerHTML=h;
+}
 
 // ==================== RECOMMANDATIONS ====================
 // Three filter modes:
