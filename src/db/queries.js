@@ -199,7 +199,7 @@ async function markReminderSent(reminderKey) {
 // Used by the "late slot" cron to identify which VAs missed their slot.
 async function countPostsBetween(vaDiscordId, platform, fromIso, toIso) {
   var result = await pool.query(
-    'SELECT COUNT(*)::int AS n FROM posts WHERE va_discord_id = $1 AND platform = $2 AND created_at >= $3 AND created_at < $4',
+    'SELECT COUNT(*)::int AS n FROM posts WHERE deleted_at IS NULL AND va_discord_id = $1 AND platform = $2 AND created_at >= $3 AND created_at < $4',
     [vaDiscordId, platform, fromIso, toIso]
   );
   return result.rows[0].n;
@@ -238,7 +238,7 @@ async function getPostMilestones(postId) {
 
 async function computeDailySummary(date, platform) {
   if (platform) {
-    var sql = "INSERT INTO daily_summaries (va_discord_id, va_name, date, platform, post_count, total_views, total_likes, total_comments, total_shares) SELECT p.va_discord_id, p.va_name, $1::date, $3, COUNT(DISTINCT p.id), COALESCE(SUM(latest.views), 0), COALESCE(SUM(latest.likes), 0), COALESCE(SUM(latest.comments), 0), COALESCE(SUM(latest.shares), 0) FROM posts p LEFT JOIN LATERAL (SELECT views, likes, comments, shares FROM snapshots s WHERE s.post_id = p.id ORDER BY s.scraped_at DESC LIMIT 1) latest ON true WHERE p.created_at::date = $1::date AND p.platform = $2 GROUP BY p.va_discord_id, p.va_name ON CONFLICT (va_discord_id, date, platform) DO UPDATE SET post_count = EXCLUDED.post_count, total_views = EXCLUDED.total_views, total_likes = EXCLUDED.total_likes, total_comments = EXCLUDED.total_comments, total_shares = EXCLUDED.total_shares RETURNING *";
+    var sql = "INSERT INTO daily_summaries (va_discord_id, va_name, date, platform, post_count, total_views, total_likes, total_comments, total_shares) SELECT p.va_discord_id, p.va_name, $1::date, $3, COUNT(DISTINCT p.id), COALESCE(SUM(latest.views), 0), COALESCE(SUM(latest.likes), 0), COALESCE(SUM(latest.comments), 0), COALESCE(SUM(latest.shares), 0) FROM posts p LEFT JOIN LATERAL (SELECT views, likes, comments, shares FROM snapshots s WHERE s.post_id = p.id ORDER BY s.scraped_at DESC LIMIT 1) latest ON true WHERE p.deleted_at IS NULL AND p.created_at::date = $1::date AND p.platform = $2 GROUP BY p.va_discord_id, p.va_name ON CONFLICT (va_discord_id, date, platform) DO UPDATE SET post_count = EXCLUDED.post_count, total_views = EXCLUDED.total_views, total_likes = EXCLUDED.total_likes, total_comments = EXCLUDED.total_comments, total_shares = EXCLUDED.total_shares RETURNING *";
     var result = await pool.query(sql, [date, platform, platform]);
     return result.rows;
   }
@@ -293,10 +293,10 @@ async function endExpiredPosts() {
 async function getPostsForExport(date, platform) {
   var sql, params;
   if (platform) {
-    sql = "SELECT p.va_name, p.url, p.ig_post_id, p.platform, p.created_at, p.status, p.performance, s.views, s.likes, s.comments, s.shares, s.retweets, s.quote_tweets, s.bookmarks, s.scraped_at FROM posts p JOIN snapshots s ON s.post_id = p.id WHERE p.created_at::date = $1 AND p.platform = $2 ORDER BY p.va_name, p.created_at, s.scraped_at";
+    sql = "SELECT p.va_name, p.url, p.ig_post_id, p.platform, p.created_at, p.status, p.performance, s.views, s.likes, s.comments, s.shares, s.retweets, s.quote_tweets, s.bookmarks, s.scraped_at FROM posts p JOIN snapshots s ON s.post_id = p.id WHERE p.deleted_at IS NULL AND p.created_at::date = $1 AND p.platform = $2 ORDER BY p.va_name, p.created_at, s.scraped_at";
     params = [date, platform];
   } else {
-    sql = "SELECT p.va_name, p.url, p.ig_post_id, p.platform, p.created_at, p.status, p.performance, s.views, s.likes, s.comments, s.shares, s.retweets, s.quote_tweets, s.bookmarks, s.scraped_at FROM posts p JOIN snapshots s ON s.post_id = p.id WHERE p.created_at::date = $1 ORDER BY p.platform, p.va_name, p.created_at, s.scraped_at";
+    sql = "SELECT p.va_name, p.url, p.ig_post_id, p.platform, p.created_at, p.status, p.performance, s.views, s.likes, s.comments, s.shares, s.retweets, s.quote_tweets, s.bookmarks, s.scraped_at FROM posts p JOIN snapshots s ON s.post_id = p.id WHERE p.deleted_at IS NULL AND p.created_at::date = $1 ORDER BY p.platform, p.va_name, p.created_at, s.scraped_at";
     params = [date];
   }
   var result = await pool.query(sql, params);
@@ -305,7 +305,7 @@ async function getPostsForExport(date, platform) {
 
 async function getTopPostsWithPerformance(date, platform) {
   var whereClause = platform
-    ? "WHERE p.created_at::date = $1 AND p.platform = $2"
+    ? "WHERE p.deleted_at IS NULL AND p.created_at::date = $1 AND p.platform = $2"
     : "WHERE p.created_at::date = $1";
   var params = platform ? [date, platform] : [date];
   var sql = "SELECT p.id, p.ig_post_id, p.url, p.va_name, p.va_discord_id, p.created_at, p.performance, p.post_type, p.platform, s.views, s.likes, s.comments, s.shares, s.retweets, s.quote_tweets, s.bookmarks FROM posts p LEFT JOIN LATERAL (SELECT views, likes, comments, shares, retweets, quote_tweets, bookmarks FROM snapshots sn WHERE sn.post_id = p.id ORDER BY sn.scraped_at DESC LIMIT 1) s ON true " + whereClause + " ORDER BY COALESCE(s.views, 0) DESC LIMIT 30";
@@ -557,7 +557,7 @@ function computeShadowbanScore(row) {
 // VAs who have NEVER posted won't appear — but the dashboard endpoint
 // cross-references with the full Discord member list so newcomers still show.
 async function getVaActivityStatus(platform) {
-  var where = platform ? "WHERE p.platform = $1 AND p.va_discord_id IS NOT NULL" : "WHERE p.va_discord_id IS NOT NULL";
+  var where = platform ? "WHERE p.deleted_at IS NULL AND p.platform = $1 AND p.va_discord_id IS NOT NULL" : "WHERE p.deleted_at IS NULL AND p.va_discord_id IS NOT NULL";
   var params = platform ? [platform] : [];
   var sql =
     "SELECT p.va_discord_id, " +
@@ -574,7 +574,7 @@ async function getVaActivityStatus(platform) {
 
 async function getNuggets(date, platform) {
   var whereClause = platform
-    ? "WHERE p.created_at::date = $1 AND p.platform = $2 AND COALESCE(s.views, 0) > 0"
+    ? "WHERE p.deleted_at IS NULL AND p.created_at::date = $1 AND p.platform = $2 AND COALESCE(s.views, 0) > 0"
     : "WHERE p.created_at::date = $1 AND COALESCE(s.views, 0) > 0";
   var params = platform ? [date, platform] : [date];
   var sql = "SELECT p.id, p.ig_post_id, p.url, p.va_name, p.va_discord_id, p.created_at, p.caption, p.performance, p.platform, s.views, s.likes, s.comments, s.shares FROM posts p LEFT JOIN LATERAL (SELECT views, likes, comments, shares FROM snapshots sn WHERE sn.post_id = p.id ORDER BY sn.scraped_at DESC LIMIT 1) s ON true " + whereClause + " ORDER BY COALESCE(s.views, 0) DESC LIMIT 15";
@@ -585,7 +585,7 @@ async function getNuggets(date, platform) {
 async function getRecommendations(date, platform) {
   var repostSql, repostParams;
   if (platform) {
-    repostSql = "SELECT p.id, p.ig_post_id, p.url, p.va_name, p.caption, p.platform, s.views, s.likes, s.comments, s.shares FROM posts p LEFT JOIN LATERAL (SELECT views, likes, comments, shares FROM snapshots sn WHERE sn.post_id = p.id ORDER BY sn.scraped_at DESC LIMIT 1) s ON true WHERE p.created_at::date = $1 AND p.platform = $3 AND COALESCE(s.views, 0) >= $2 ORDER BY COALESCE(s.views, 0) DESC LIMIT 10";
+    repostSql = "SELECT p.id, p.ig_post_id, p.url, p.va_name, p.caption, p.platform, s.views, s.likes, s.comments, s.shares FROM posts p LEFT JOIN LATERAL (SELECT views, likes, comments, shares FROM snapshots sn WHERE sn.post_id = p.id ORDER BY sn.scraped_at DESC LIMIT 1) s ON true WHERE p.deleted_at IS NULL AND p.created_at::date = $1 AND p.platform = $3 AND COALESCE(s.views, 0) >= $2 ORDER BY COALESCE(s.views, 0) DESC LIMIT 10";
     repostParams = [date, BON_VIEWS, platform];
   } else {
     repostSql = "SELECT p.id, p.ig_post_id, p.url, p.va_name, p.caption, p.platform, s.views, s.likes, s.comments, s.shares FROM posts p LEFT JOIN LATERAL (SELECT views, likes, comments, shares FROM snapshots sn WHERE sn.post_id = p.id ORDER BY sn.scraped_at DESC LIMIT 1) s ON true WHERE p.created_at::date = $1 AND COALESCE(s.views, 0) >= $2 ORDER BY COALESCE(s.views, 0) DESC LIMIT 10";
@@ -603,7 +603,7 @@ async function getRecommendations(date, platform) {
   var topPerformers = summaries.filter(function(s) { return Number(s.total_views) >= totalAvg * 1.5; });
 
   var allPostsWhere = platform
-    ? "WHERE p.created_at::date = $1 AND p.platform = $2"
+    ? "WHERE p.deleted_at IS NULL AND p.created_at::date = $1 AND p.platform = $2"
     : "WHERE p.created_at::date = $1";
   var allPostsParams = platform ? [date, platform] : [date];
   var allPostsSql = "SELECT p.id, p.performance, s.views FROM posts p LEFT JOIN LATERAL (SELECT views FROM snapshots sn WHERE sn.post_id = p.id ORDER BY sn.scraped_at DESC LIMIT 1) s ON true " + allPostsWhere;
@@ -642,7 +642,7 @@ async function getHourlyPerformance(days, platform) {
 
 async function getPostsForCoaching(platform) {
   var platformFilter = platform ? " AND p.platform = '" + platform + "'" : "";
-  var sql = "SELECT p.id, p.ig_post_id, p.url, p.va_name, p.va_discord_id, p.created_at, p.caption, p.platform, s.views, s.likes, s.comments, s.shares FROM posts p LEFT JOIN LATERAL (SELECT views, likes, comments, shares FROM snapshots sn WHERE sn.post_id = p.id ORDER BY sn.scraped_at DESC LIMIT 1) s ON true WHERE p.status = 'active' AND p.created_at <= NOW() - INTERVAL '55 minutes' AND p.created_at >= NOW() - INTERVAL '75 minutes' AND NOT EXISTS (SELECT 1 FROM snapshots sn2 WHERE sn2.post_id = p.id AND sn2.scraped_at >= p.created_at + INTERVAL '50 minutes' AND sn2.error = 'coaching_sent')" + platformFilter + " ORDER BY p.created_at ASC";
+  var sql = "SELECT p.id, p.ig_post_id, p.url, p.va_name, p.va_discord_id, p.created_at, p.caption, p.platform, s.views, s.likes, s.comments, s.shares FROM posts p LEFT JOIN LATERAL (SELECT views, likes, comments, shares FROM snapshots sn WHERE sn.post_id = p.id ORDER BY sn.scraped_at DESC LIMIT 1) s ON true WHERE p.deleted_at IS NULL AND p.status = 'active' AND p.created_at <= NOW() - INTERVAL '55 minutes' AND p.created_at >= NOW() - INTERVAL '75 minutes' AND NOT EXISTS (SELECT 1 FROM snapshots sn2 WHERE sn2.post_id = p.id AND sn2.scraped_at >= p.created_at + INTERVAL '50 minutes' AND sn2.error = 'coaching_sent')" + platformFilter + " ORDER BY p.created_at ASC";
   var result = await pool.query(sql);
   return result.rows;
 }
@@ -981,6 +981,7 @@ async function getAccountDetails(accountId, daysLimit) {
     "SELECT p.id, p.ig_post_id, p.url, p.va_name, p.va_discord_id, p.created_at, " +
     "       p.posted_at, p.link_delay_minutes, " +
     "       p.caption, p.performance, p.platform, p.status, " +
+    "       p.deleted_at, p.deleted_by, " +
     "       s.views, s.likes, s.comments, s.shares, s.retweets, s.quote_tweets, s.bookmarks " +
     "FROM posts p " +
     "LEFT JOIN LATERAL ( " +
@@ -991,7 +992,36 @@ async function getAccountDetails(accountId, daysLimit) {
     "WHERE p.account_id = $1 AND p.created_at >= NOW() - ($2 || ' days')::interval " +
     "ORDER BY p.created_at DESC";
   var posts = await pool.query(postsSql, [accountId, daysLimit]);
-  return { account: account, posts: posts.rows };
+
+  // Split posts into active and deleted (the dashboard shows them in two sections)
+  var active = [];
+  var deleted = [];
+  for (var i = 0; i < posts.rows.length; i++) {
+    if (posts.rows[i].deleted_at) deleted.push(posts.rows[i]);
+    else active.push(posts.rows[i]);
+  }
+  return { account: account, posts: active, deletedPosts: deleted };
+}
+
+// Soft delete a post: keeps the row but marks it as deleted.
+// Deleted posts are excluded from rankings, totals, alerts, etc.
+async function softDeletePost(postId, deletedBy) {
+  var sql = "UPDATE posts SET deleted_at = NOW(), deleted_by = $2, status = 'deleted' WHERE id = $1 AND deleted_at IS NULL RETURNING id, platform, account_id";
+  var result = await pool.query(sql, [postId, deletedBy || 'unknown']);
+  return result.rows[0] || null;
+}
+
+// Restore a previously soft-deleted post back to active.
+async function restorePost(postId) {
+  var sql = "UPDATE posts SET deleted_at = NULL, deleted_by = NULL, status = 'active' WHERE id = $1 AND deleted_at IS NOT NULL RETURNING id, platform";
+  var result = await pool.query(sql, [postId]);
+  return result.rows[0] || null;
+}
+
+// Get a post by ID for permission checks before delete/restore.
+async function getPostBasics(postId) {
+  var result = await pool.query('SELECT id, platform, account_id, va_discord_id, deleted_at FROM posts WHERE id = $1', [postId]);
+  return result.rows[0] || null;
 }
 
 // Manually mark an account active/inactive (e.g. admin override from the dashboard).
@@ -1209,6 +1239,7 @@ module.exports = {
   recordDmAttempt, getAllDmStatus, getBlockedDmVAs, getVaActivityStatus,
   getShadowbanCandidates, computeShadowbanScore,
   markLateAlertSent, getLateLinkPosts, wasReminderSent, markReminderSent, countPostsBetween,
+  softDeletePost, restorePost, getPostBasics,
   // Streaks
   updateStreak, getAllStreaks,
   // Alerts
