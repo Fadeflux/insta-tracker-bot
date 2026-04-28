@@ -79,8 +79,32 @@ async function scrapePost(url) {
 
   if (!html || html.length < 1000) {
     result.error = 'Empty/short response (login wall?)';
+    console.log('[Threads DEBUG] HTML too short, first 500 chars: ' + (html || '').substring(0, 500));
     return result;
   }
+
+  // === DIAGNOSTIC LOGGING (temporaire) ===
+  // Compte les occurrences de chaque champ stat dans le HTML pour comprendre
+  // ce que Threads renvoie aux visiteurs anonymes via notre proxy.
+  console.log('[Threads DIAG] === Diagnostic du HTML recu ===');
+  console.log('[Threads DIAG] like_count occurrences: ' + ((html.match(/"like_count"\s*:\s*\d+/g) || []).length));
+  console.log('[Threads DIAG] view_count occurrences: ' + ((html.match(/"view_count"\s*:\s*\d+/g) || []).length));
+  console.log('[Threads DIAG] direct_reply_count occurrences: ' + ((html.match(/"direct_reply_count"\s*:\s*\d+/g) || []).length));
+  console.log('[Threads DIAG] taken_at occurrences: ' + ((html.match(/"taken_at"\s*:\s*\d+/g) || []).length));
+  console.log('[Threads DIAG] __NEXT_DATA__ present: ' + (/<script[^>]*id="__NEXT_DATA__"/.test(html) ? 'YES' : 'NO'));
+  console.log('[Threads DIAG] application/json scripts: ' + ((html.match(/<script[^>]*type="application\/json"/g) || []).length));
+  console.log('[Threads DIAG] login wall detected: ' + (/Sign up to see|Log in to|loginButton/i.test(html) ? 'YES' : 'NO'));
+  // Print first found values if any
+  var firstLike = html.match(/"like_count"\s*:\s*(\d+)/);
+  var firstView = html.match(/"view_count"\s*:\s*(\d+)/);
+  var firstReply = html.match(/"direct_reply_count"\s*:\s*(\d+)/);
+  console.log('[Threads DIAG] First like_count value: ' + (firstLike ? firstLike[1] : '(not found)'));
+  console.log('[Threads DIAG] First view_count value: ' + (firstView ? firstView[1] : '(not found)'));
+  console.log('[Threads DIAG] First direct_reply value: ' + (firstReply ? firstReply[1] : '(not found)'));
+  // OG description (often contains stats summary)
+  var ogDesc = html.match(/<meta[^>]+property="og:description"[^>]+content="([^"]+)"/);
+  if (ogDesc) console.log('[Threads DIAG] OG description: ' + ogDesc[1].substring(0, 200));
+  console.log('[Threads DIAG] === Fin diagnostic ===');
 
   // === USERNAME FALLBACK: og:title pattern "Name (@username) on Threads" ===
   if (!result.username) {
