@@ -265,6 +265,19 @@ function createWebServer() {
     } catch(err) { res.status(500).json({ error: err.message }); }
   });
 
+  // Returns aggregated totals across all time (or a date range if from/to provided).
+  // Used by the Dashboard's "Depuis toujours" view. Same shape as /api/stats/:date
+  // for the summaries field but with totals across the whole period.
+  app.get('/api/all-time-stats', checkAuth, async function(req, res) {
+    try {
+      var platform = getEffectivePlatform(req);
+      var fromDate = req.query.from || null;
+      var toDate = req.query.to || null;
+      var summaries = await db.getRangeSummaries(fromDate, toDate, platform);
+      res.json({ from: fromDate, to: toDate, platform: platform || 'all', summaries: summaries });
+    } catch(err) { res.status(500).json({ error: err.message }); }
+  });
+
   app.get('/api/history/:days', checkAuth, async function(req, res) {
     try {
       var platform = getEffectivePlatform(req);
@@ -430,7 +443,12 @@ function createWebServer() {
   app.get('/api/heatmap', checkAuth, async function(req, res) {
     try {
       var platform = getEffectivePlatform(req);
-      var days = parseInt(req.query.days) || 7;
+      var daysParam = req.query.days;
+      // Accept 'all' or a number; default 7
+      var days;
+      if (daysParam === 'all') days = 'all';
+      else days = parseInt(daysParam) || 7;
+
       var hourly = await db.getHourlyPerformance(days, platform);
 
       var hourMap = {};
@@ -449,7 +467,9 @@ function createWebServer() {
       });
 
       var result = Object.values(hourMap).sort(function(a, b) { return a.hour - b.hour; });
-      res.json({ days: days, platform: platform || 'all', hours: result });
+      // Sum posts across all hours so the UI can display the total.
+      var totalPosts = result.reduce(function(a, b) { return a + (b.post_count || 0); }, 0);
+      res.json({ days: days, platform: platform || 'all', hours: result, totalPosts: totalPosts });
     } catch(err) { res.status(500).json({ error: err.message }); }
   });
 
