@@ -257,6 +257,47 @@ async function getDailySummaries(date, platform) {
   return result2.rows;
 }
 
+// Get summaries aggregated over a date range (or all time if fromDate is null).
+// Returns the same shape as getDailySummaries (per-VA totals) but summed over the range.
+// Used by the dashboard's "Depuis toujours" / period filters.
+async function getRangeSummaries(fromDate, toDate, platform) {
+  // Build WHERE clause
+  var conditions = ['p.deleted_at IS NULL', 'p.va_discord_id IS NOT NULL'];
+  var params = [];
+  if (fromDate) {
+    params.push(fromDate);
+    conditions.push("p.created_at::date >= $" + params.length);
+  }
+  if (toDate) {
+    params.push(toDate);
+    conditions.push("p.created_at::date <= $" + params.length);
+  }
+  if (platform) {
+    params.push(platform);
+    conditions.push("p.platform = $" + params.length);
+  }
+  var whereClause = "WHERE " + conditions.join(' AND ');
+
+  var sql =
+    "SELECT p.va_discord_id, " +
+    "       MAX(p.va_name) AS va_name, " +
+    "       COUNT(DISTINCT p.id)::int AS post_count, " +
+    "       COALESCE(SUM(latest.views), 0)::bigint AS total_views, " +
+    "       COALESCE(SUM(latest.likes), 0)::bigint AS total_likes, " +
+    "       COALESCE(SUM(latest.comments), 0)::bigint AS total_comments, " +
+    "       COALESCE(SUM(latest.shares), 0)::bigint AS total_shares " +
+    "FROM posts p " +
+    "LEFT JOIN LATERAL ( " +
+    "  SELECT views, likes, comments, shares FROM snapshots s " +
+    "  WHERE s.post_id = p.id ORDER BY s.scraped_at DESC LIMIT 1 " +
+    ") latest ON true " +
+    whereClause + " " +
+    "GROUP BY p.va_discord_id " +
+    "ORDER BY total_views DESC";
+  var result = await pool.query(sql, params);
+  return result.rows;
+}
+
 async function getVaDailyStats(vaDiscordId, date, platform) {
   if (platform) {
     var result = await pool.query('SELECT * FROM daily_summaries WHERE va_discord_id = $1 AND date = $2 AND platform = $3', [vaDiscordId, date, platform]);
@@ -689,11 +730,33 @@ async function getRecommendations(dateOrPeriod, platform) {
 }
 
 async function getHourlyPerformance(days, platform) {
-  var whereClause = platform
-    ? "WHERE p.created_at >= NOW() - ($1 || ' days')::interval AND p.platform = $2 AND COALESCE(latest.views, 0) > 0"
-    : "WHERE p.created_at >= NOW() - ($1 || ' days')::interval AND COALESCE(latest.views, 0) > 0";
-  var params = platform ? [days, platform] : [days];
-  var sql = "SELECT EXTRACT(HOUR FROM p.created_at AT TIME ZONE 'Europe/Paris')::int AS hour, COUNT(DISTINCT p.id) AS post_count, COALESCE(AVG(latest.views), 0)::int AS avg_views, COALESCE(AVG(latest.likes), 0)::int AS avg_likes, COALESCE(AVG(latest.comments), 0)::int AS avg_comments, CASE WHEN COALESCE(AVG(latest.views), 0) > 0 THEN ROUND((COALESCE(AVG(latest.likes), 0) + COALESCE(AVG(latest.comments), 0)) / GREATEST(AVG(latest.views), 1) * 100, 2) ELSE 0 END AS avg_engagement FROM posts p LEFT JOIN LATERAL (SELECT views, likes, comments FROM snapshots sn WHERE sn.post_id = p.id ORDER BY sn.scraped_at DESC LIMIT 1) latest ON true " + whereClause + " GROUP BY hour ORDER BY hour";
+  // days can be a number or 'all' (since the beginning of time)
+  var isAll = (days === 'all' || days === 'ALL');
+  var dateClause, params;
+
+  if (isAll) {
+    // No date lower bound — all posts ever
+    if (platform) {
+      dateClause = "p.platform = $1";
+      params = [platform];
+    } else {
+      dateClause = "1=1";
+      params = [];
+    }
+  } else {
+    // Last N days
+    if (platform) {
+      dateClause = "p.created_at >= NOW() - ($1 || ' days')::interval AND p.platform = $2";
+      params = [days, platform];
+    } else {
+      dateClause = "p.created_at >= NOW() - ($1 || ' days')::interval";
+      params = [days];
+    }
+  }
+
+  var whereClause = "WHERE p.deleted_at IS NULL AND " + dateClause + " AND COALESCE(latest.views, 0) > 0";
+
+  var sql = "SELECT EXTRACT(HOUR FROM p.created_at AT TIME ZONE 'Africa/Porto-Novo')::int AS hour, COUNT(DISTINCT p.id) AS post_count, COALESCE(AVG(latest.views), 0)::int AS avg_views, COALESCE(AVG(latest.likes), 0)::int AS avg_likes, COALESCE(AVG(latest.comments), 0)::int AS avg_comments, CASE WHEN COALESCE(AVG(latest.views), 0) > 0 THEN ROUND((COALESCE(AVG(latest.likes), 0) + COALESCE(AVG(latest.comments), 0)) / GREATEST(AVG(latest.views), 1) * 100, 2) ELSE 0 END AS avg_engagement FROM posts p LEFT JOIN LATERAL (SELECT views, likes, comments FROM snapshots sn WHERE sn.post_id = p.id ORDER BY sn.scraped_at DESC LIMIT 1) latest ON true " + whereClause + " GROUP BY hour ORDER BY hour";
   var result = await pool.query(sql, params);
   return result.rows;
 }
@@ -1287,7 +1350,7 @@ module.exports = {
   // Snapshots
   insertSnapshot, getLatestSnapshot, getSnapshotHistory, getSnapshotAtHour, getPostMilestones,
   // Summaries
-  computeDailySummary, getDailySummaries, getVaDailyStats, getVaPostsToday,
+  computeDailySummary, getDailySummaries, getRangeSummaries, getVaDailyStats, getVaPostsToday,
   getLeaderboard, endExpiredPosts, getPostsForExport,
   // Analytics
   getTopPostsWithPerformance, getVaPerformanceHistory, checkViralPosts,
