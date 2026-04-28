@@ -322,23 +322,6 @@ function createWebServer() {
     } catch(err) { res.status(500).json({ error: err.message }); }
   });
 
-  app.get('/api/top-posts', checkAuth, async function(req, res) {
-    try {
-      var platform = getEffectivePlatform(req);
-      var date = req.query.date || new Date().toISOString().split('T')[0];
-      var posts = await db.getTopPostsWithPerformance(date, platform);
-
-      posts = posts.map(function(p) {
-        p.score = calcScore(p);
-        p.engagement = calcEngagement(p);
-        p.perf = getPerf(Number(p.views) || 0);
-        return p;
-      });
-
-      res.json({ date: date, platform: platform || 'all', posts: posts });
-    } catch(err) { res.status(500).json({ error: err.message }); }
-  });
-
   app.get('/api/thresholds', checkAuth, function(req, res) {
     res.json({
       viral: parseInt(process.env.VIRAL_VIEWS || '5000'),
