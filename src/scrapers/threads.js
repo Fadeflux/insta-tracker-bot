@@ -60,26 +60,39 @@ async function scrapePost(url) {
   var ua = getRandomUA();
   var normalizedUrl = url.split('?')[0].replace('threads.com', 'threads.net');
 
-  // === STRATEGY 1: Public page fetch via proxy ===
+  // === Cascade de strategies ===
+  // Threads peut bloquer via threads.net selon la geo IP du proxy. On tente
+  // 3 strategies dans l'ordre, en gardant le HTML le plus consistant.
+  var urlNet = url.split('?')[0].replace('threads.com', 'threads.net');
+  var urlCom = url.split('?')[0].replace('threads.net', 'threads.com');
+
+  var attempts = [
+    { label: 'proxy threads.com', url: urlCom, fn: fetchViaProxy },
+    { label: 'proxy threads.net', url: urlNet, fn: fetchViaProxy },
+    { label: 'direct threads.com', url: urlCom, fn: fetchDirect },
+    { label: 'direct threads.net', url: urlNet, fn: fetchDirect },
+  ];
+
   var html = '';
-  try {
-    html = await fetchViaProxy(normalizedUrl, ua);
-    console.log('[Threads] Page via proxy length: ' + html.length);
-  } catch (e) {
-    console.log('[Threads] Proxy fetch failed, trying direct: ' + e.message);
+  for (var ai = 0; ai < attempts.length; ai++) {
+    var att = attempts[ai];
     try {
-      html = await fetchDirect(normalizedUrl, ua);
-      console.log('[Threads] Page direct length: ' + html.length);
-    } catch (e2) {
-      console.log('[Threads] Direct fetch also failed: ' + e2.message);
-      result.error = 'All fetch strategies failed: ' + e2.message;
-      return result;
+      var got = await att.fn(att.url, ua);
+      var gotLen = (got || '').length;
+      console.log('[Threads] ' + att.label + ' length: ' + gotLen);
+      if (gotLen > 1000) {
+        html = got;
+        console.log('[Threads] Using ' + att.label + ' (length=' + gotLen + ')');
+        break;
+      }
+    } catch (e) {
+      console.log('[Threads] ' + att.label + ' failed: ' + e.message);
     }
   }
 
   if (!html || html.length < 1000) {
-    result.error = 'Empty/short response (login wall?)';
-    console.log('[Threads DEBUG] HTML too short, first 500 chars: ' + (html || '').substring(0, 500));
+    result.error = 'All strategies returned empty/short HTML';
+    console.log('[Threads DEBUG] All 4 strategies failed. Likely the proxy blocks Meta Threads or Threads requires login.');
     return result;
   }
 
