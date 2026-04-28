@@ -117,6 +117,44 @@ async function scrapePost(url) {
   // OG description (often contains stats summary)
   var ogDesc = html.match(/<meta[^>]+property="og:description"[^>]+content="([^"]+)"/);
   if (ogDesc) console.log('[Threads DIAG] OG description: ' + ogDesc[1].substring(0, 200));
+
+  // === DEEP DIAGNOSTIC: dump JSON scripts to find the real field names ===
+  console.log('[Threads DEEP] === Recherche des compteurs avec patterns alternatifs ===');
+  // Chercher tous les patterns potentiels Meta utilise
+  var altPatterns = [
+    'likeCount', 'viewCount', 'replyCount', 'commentCount',
+    'reposts', 'shareCount', 'feedback_count',
+    'play_count', 'video_view_count', 'media_overlay_info',
+    'stat_text', 'engagement', 'metrics',
+  ];
+  altPatterns.forEach(function(name) {
+    var re = new RegExp('"' + name + '"\\s*:\\s*([^,\\}]+)', 'g');
+    var matches = html.match(re);
+    if (matches && matches.length > 0) {
+      console.log('[Threads DEEP] Pattern "' + name + '": ' + matches.length + ' matches | first 3: ' + matches.slice(0, 3).join(' || '));
+    }
+  });
+
+  // Dump les 2 premiers scripts JSON (tronqués) pour voir leur structure
+  var jsonScripts = html.match(/<script[^>]*type="application\/json"[^>]*>([\s\S]*?)<\/script>/g);
+  if (jsonScripts && jsonScripts.length > 0) {
+    for (var si = 0; si < Math.min(2, jsonScripts.length); si++) {
+      var content = jsonScripts[si].replace(/<script[^>]*>/, '').replace(/<\/script>/, '');
+      // Cherche le passage qui contient des chiffres genre stats
+      var stats = content.match(/[^,\{]*?(?:like|view|reply|share|repost|count|stat|engagement)[^,\{]{0,50}/gi);
+      if (stats) {
+        console.log('[Threads DEEP] Script ' + si + ' stats fragments (first 5): ' + stats.slice(0, 5).join(' | '));
+      }
+      // Premiers 800 char du script
+      console.log('[Threads DEEP] Script ' + si + ' preview (800ch): ' + content.substring(0, 800));
+    }
+  }
+
+  // Cherche les nombres genre "24.5K" dans le texte
+  var humanCounts = html.match(/[\d.,]+\s*[KMB]?\s*(?:vues|views|likes|j.aime)/gi);
+  if (humanCounts) {
+    console.log('[Threads DEEP] Human-readable counts: ' + humanCounts.slice(0, 5).join(' | '));
+  }
   console.log('[Threads DIAG] === Fin diagnostic ===');
 
   // === USERNAME FALLBACK: og:title pattern "Name (@username) on Threads" ===
