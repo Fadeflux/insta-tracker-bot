@@ -125,12 +125,16 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(-
 }
 
 /* KPIs */
-.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:28px}
-.kpi{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:20px 18px;position:relative;overflow:hidden;transition:all 0.25s}
+/* On desktop we want 9 cards on one line. With minmax(120px,1fr) the grid
+   fits 9-10 cards on a 1280px+ container, then naturally wraps to fewer
+   columns on smaller screens (tablets get 5-6 per row, phones 2 — see
+   media queries above which override this for <800px). */
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;margin-bottom:28px}
+.kpi{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:18px 14px;position:relative;overflow:hidden;transition:all 0.25s}
 .kpi:hover{transform:translateY(-3px);border-color:rgba(255,255,255,0.12);box-shadow:0 12px 40px rgba(0,0,0,0.5)}
-.kpi .icon{font-size:16px;margin-bottom:8px;opacity:0.9}
-.kpi .val{font-size:26px;font-weight:800;line-height:1;letter-spacing:-0.5px}
-.kpi .lbl{font-size:10px;color:var(--text3);margin-top:6px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px}
+.kpi .icon{font-size:15px;margin-bottom:8px;opacity:0.9}
+.kpi .val{font-size:22px;font-weight:800;line-height:1;letter-spacing:-0.5px}
+.kpi .lbl{font-size:9px;color:var(--text3);margin-top:6px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px}
 .kpi .sub{font-size:9px;color:var(--text3);margin-top:3px}
 .kpi::after{content:'';position:absolute;top:-30px;right:-30px;width:90px;height:90px;border-radius:50%;opacity:0.06}
 
