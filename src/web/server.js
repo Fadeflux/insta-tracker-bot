@@ -112,7 +112,18 @@ function calcAdvancedScore(s) {
 function getEffectivePlatform(req) {
   var requested = req.query.platform;
   if (req.userPlatform === 'all') return requested || null; // null = all platforms
-  return req.userPlatform; // forced to user's platform
+
+  // If the user has a multi-platform value like "instagram,threads", they can
+  // freely switch between those platforms (?platform=instagram). If the
+  // requested platform is one they're allowed, honor it. Otherwise fall back
+  // to their first allowed platform so we don't expose data they shouldn't see.
+  if (req.userPlatform && req.userPlatform.indexOf(',') !== -1) {
+    var allowed = req.userPlatform.split(',').map(function(p) { return String(p).toLowerCase().trim(); }).filter(Boolean);
+    if (requested && allowed.indexOf(requested) !== -1) return requested;
+    return allowed[0]; // default to the first allowed platform
+  }
+
+  return req.userPlatform; // single-platform user
 }
 
 // Get the list of platforms a user is allowed to see/query.
@@ -717,7 +728,7 @@ function createWebServer() {
   });
 
   // Create or update a dashboard user
-  app.post('/api/admin/users', checkAuth, checkAdmin, function(req, res) {
+  app.post('/api/admin/users', checkAuth, checkAdmin, async function(req, res) {
     var username = (req.body.username || '').trim().toLowerCase();
     var password = req.body.password || '';
     var role = req.body.role || 'va';
@@ -727,13 +738,19 @@ function createWebServer() {
     if (!username || username.length < 2) return res.status(400).json({ error: 'Username trop court (min 2 caracteres)' });
     if (!password || password.length < 4) return res.status(400).json({ error: 'Mot de passe trop court (min 4 caracteres)' });
     if (['admin', 'manager', 'va'].indexOf(role) === -1) return res.status(400).json({ error: 'Role invalide (admin, manager, va)' });
-    if (['all', 'instagram', 'twitter', 'geelark'].indexOf(platform) === -1) {
-      // Check if comma-separated combo like "instagram,geelark"
-      var platParts = platform.split(',');
-      var validPlats = ['instagram', 'twitter', 'geelark'];
-      var allValid = platParts.every(function(p) { return validPlats.indexOf(p) !== -1; });
-      if (!allValid) return res.status(400).json({ error: 'Plateforme invalide' });
+
+    // Validate platform: accept 'all', a single platform, OR a comma-separated combo.
+    // Allowed individual platforms: instagram, twitter, geelark, threads.
+    var validPlats = ['instagram', 'twitter', 'geelark', 'threads'];
+    if (platform !== 'all') {
+      var platParts = platform.split(',').map(function(p) { return p.trim(); }).filter(Boolean);
+      if (platParts.length === 0) return res.status(400).json({ error: 'Plateforme manquante' });
+      var invalid = platParts.filter(function(p) { return validPlats.indexOf(p) === -1; });
+      if (invalid.length > 0) return res.status(400).json({ error: 'Plateforme(s) invalide(s): ' + invalid.join(', ') });
+      // Re-normalize so the stored value is always sorted/clean
+      platform = platParts.join(',');
     }
+
     if (discordId && !/^\d{17,20}$/.test(discordId)) {
       return res.status(400).json({ error: 'Discord ID doit faire 17-20 chiffres' });
     }
@@ -741,17 +758,22 @@ function createWebServer() {
     var isNew = !DASHBOARD_USERS[username];
     DASHBOARD_USERS[username] = { password: password, role: role, platform: platform, discordId: discordId };
 
-    // Also save to DB for persistence across restarts
-    db.upsertDashboardUser(username, password, role, platform, discordId).catch(function(e) {
-      console.error('Failed to save user to DB:', e.message);
-    });
+    // Persist to DB. We AWAIT this so we can return a real error to the frontend
+    // if the DB rejects (which is what was happening before with the CHECK constraint).
+    try {
+      await db.upsertDashboardUser(username, password, role, platform, discordId);
+    } catch (e) {
+      console.log('[Users] DB save FAILED for ' + username + ': ' + e.message);
+      // Roll back the in-memory change so the UI shows the truth
+      if (isNew) delete DASHBOARD_USERS[username];
+      return res.status(500).json({ error: 'Sauvegarde en base echouee: ' + e.message });
+    }
 
-    console.log('[Admin] User ' + (isNew ? 'created' : 'updated') + ': ' + username + ' (' + role + '/' + platform + ')' + (discordId ? ' discord_id=' + discordId : ''));
-    res.json({ success: true, action: isNew ? 'created' : 'updated', username: username, role: role, platform: platform, discordId: discordId });
+    console.log('[Users] ' + (isNew ? 'CREATED' : 'UPDATED') + ' ' + username + ' role=' + role + ' platform=' + platform + (discordId ? ' discord=' + discordId : ''));
+    res.json({ success: true, action: isNew ? 'cree' : 'modifie' });
   });
-
   // Update user platform/role (without changing password)
-  app.put('/api/admin/users/:username', checkAuth, checkAdmin, function(req, res) {
+  app.put('/api/admin/users/:username', checkAuth, checkAdmin, async function(req, res) {
     var username = req.params.username;
     if (!DASHBOARD_USERS[username]) return res.status(404).json({ error: 'Utilisateur non trouve' });
 
@@ -764,13 +786,28 @@ function createWebServer() {
       return res.status(400).json({ error: 'Discord ID doit faire 17-20 chiffres' });
     }
 
+    // Validate platform — same logic as POST
+    var validPlats = ['instagram', 'twitter', 'geelark', 'threads'];
+    if (platform !== 'all') {
+      var platParts = String(platform).split(',').map(function(p) { return p.trim(); }).filter(Boolean);
+      if (platParts.length === 0) return res.status(400).json({ error: 'Plateforme manquante' });
+      var invalid = platParts.filter(function(p) { return validPlats.indexOf(p) === -1; });
+      if (invalid.length > 0) return res.status(400).json({ error: 'Plateforme(s) invalide(s): ' + invalid.join(', ') });
+      platform = platParts.join(',');
+    }
+
+    var oldUser = Object.assign({}, DASHBOARD_USERS[username]);
     DASHBOARD_USERS[username] = { password: password, role: role, platform: platform, discordId: discordId || null };
 
-    db.upsertDashboardUser(username, password, role, platform, discordId || null).catch(function(e) {
-      console.error('Failed to update user in DB:', e.message);
-    });
+    try {
+      await db.upsertDashboardUser(username, password, role, platform, discordId || null);
+    } catch (e) {
+      console.log('[Users] DB update FAILED for ' + username + ': ' + e.message);
+      DASHBOARD_USERS[username] = oldUser; // rollback
+      return res.status(500).json({ error: 'Sauvegarde en base echouee: ' + e.message });
+    }
 
-    console.log('[Admin] User updated: ' + username + ' (' + role + '/' + platform + ')' + (discordId ? ' discord_id=' + discordId : ''));
+    console.log('[Users] UPDATED ' + username + ' role=' + role + ' platform=' + platform + (discordId ? ' discord=' + discordId : ''));
     res.json({ success: true, username: username, role: role, platform: platform, discordId: discordId || null });
   });
 
