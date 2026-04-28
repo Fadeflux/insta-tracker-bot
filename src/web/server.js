@@ -350,9 +350,46 @@ function createWebServer() {
   app.get('/api/recommendations', checkAuth, async function(req, res) {
     try {
       var platform = getEffectivePlatform(req);
-      var date = req.query.date || new Date().toISOString().split('T')[0];
-      await db.computeDailySummary(date, platform);
-      var recs = await db.getRecommendations(date, platform);
+
+      // Build the period from query params.
+      // Either ?date=YYYY-MM-DD (single day, legacy)
+      // Or ?period=today|7d|15d|30d|all (relative range)
+      // Or ?from=YYYY-MM-DD&to=YYYY-MM-DD (custom range)
+      var dateOrPeriod;
+      var todayStr = new Date().toISOString().split('T')[0];
+      function daysAgo(n) {
+        var d = new Date();
+        d.setUTCDate(d.getUTCDate() - n);
+        return d.toISOString().split('T')[0];
+      }
+
+      if (req.query.from || req.query.period === 'all') {
+        // Period mode
+        if (req.query.period === 'all') {
+          dateOrPeriod = { from: null, to: todayStr };
+        } else {
+          dateOrPeriod = { from: req.query.from, to: req.query.to || todayStr };
+        }
+      } else if (req.query.period) {
+        var to = todayStr;
+        var from;
+        if (req.query.period === 'today') from = todayStr;
+        else if (req.query.period === '7d') from = daysAgo(6);  // 7 days including today
+        else if (req.query.period === '15d') from = daysAgo(14);
+        else if (req.query.period === '30d') from = daysAgo(29);
+        else from = todayStr;
+        dateOrPeriod = { from: from, to: to };
+      } else {
+        // Legacy: single date
+        dateOrPeriod = req.query.date || todayStr;
+      }
+
+      // For single-day legacy mode, compute the daily summary cache (used by underperformers)
+      if (typeof dateOrPeriod === 'string') {
+        await db.computeDailySummary(dateOrPeriod, platform);
+      }
+
+      var recs = await db.getRecommendations(dateOrPeriod, platform);
 
       recs.postsToRepost = recs.postsToRepost.map(function(p) {
         p.score = calcScore(p);
@@ -366,6 +403,18 @@ function createWebServer() {
         p.advancedScore = calcAdvancedScore(p);
         return p;
       });
+      // Also compute scores for postsByTier
+      if (recs.postsByTier) {
+        ['viral', 'bon', 'moyen', 'flop'].forEach(function(tier) {
+          if (recs.postsByTier[tier]) {
+            recs.postsByTier[tier] = recs.postsByTier[tier].map(function(p) {
+              p.score = calcScore(p);
+              p.engagement = calcEngagement(p);
+              return p;
+            });
+          }
+        });
+      }
 
       res.json(recs);
     } catch(err) { res.status(500).json({ error: err.message }); }
