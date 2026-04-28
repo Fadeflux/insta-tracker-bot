@@ -894,9 +894,11 @@ function createWebServer() {
       // Always restrict to the user's allowed platforms (for managers).
       var requestedPlatform = req.query.platform;
       var allowedForUser = getUserAllowedPlatforms(req);
-      var platforms = config.getActivePlatforms().filter(function(p) {
+      var activePlats = config.getActivePlatforms();
+      var platforms = activePlats.filter(function(p) {
         return allowedForUser.indexOf(p) !== -1;
       });
+      console.log('[activity-status] user=' + req.user + ' userPlat=' + req.userPlatform + ' requested=' + requestedPlatform + ' allowed=' + JSON.stringify(allowedForUser) + ' active=' + JSON.stringify(activePlats) + ' final=' + JSON.stringify(platforms));
       if (requestedPlatform && platforms.indexOf(requestedPlatform) !== -1) {
         platforms = [requestedPlatform];
       }
@@ -928,7 +930,10 @@ function createWebServer() {
       for (var j = 0; j < platforms.length; j++) {
         var plat = platforms[j];
         var pc = config.platforms[plat];
-        if (!pc || !pc.guildId || !pc.vaRoleId) continue;
+        if (!pc || !pc.guildId || !pc.vaRoleId) {
+          console.log('[activity-status] SKIP ' + plat + ': pc=' + (!!pc) + ' guildId=' + (pc?pc.guildId:'-') + ' vaRoleId=' + (pc?pc.vaRoleId:'-'));
+          continue;
+        }
         var guild = null;
         try {
           guild = await client.guilds.fetch(pc.guildId);
@@ -949,6 +954,7 @@ function createWebServer() {
           var members = guild.members.cache.filter(function(m) {
             return m.roles.cache.has(pc.vaRoleId) && !m.user.bot;
           });
+          console.log('[activity-status] ' + plat + ': cache=' + guild.members.cache.size + ' VA-role=' + members.size + ' (vaRoleId=' + pc.vaRoleId + ')');
           members.forEach(function(m) {
             var id = m.user.id;
             if (seen[id]) {
