@@ -241,7 +241,6 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(-
 <div class="nav-item" onclick="go('lb',this)">Classement</div>
 <div class="nav-item" onclick="go('reco',this)">Recommandations</div>
 <div class="nav-item" onclick="go('heat',this)">Heures</div>
-<div class="nav-item" onclick="go('evolution',this)">Evolution</div>
 <div class="nav-item" onclick="go('accounts',this)">Comptes</div>
 <div class="nav-item" onclick="go('global',this)">Global</div>
 </div>
@@ -279,7 +278,7 @@ function showApp(){document.getElementById('loginPage').style.display='none';doc
 function af(u){var sep=u.indexOf('?')!==-1?'&':'?';var platParam=PLAT==='all'?'':sep+'platform='+PLAT;var url=A+u+(PLAT==='all'?'':platParam);return fetch(url,{headers:{'X-Auth-Token':T}}).then(function(r){if(r.status===401){doLogout();throw new Error('x')}return r.json()})}
 
 function go(t,el){document.querySelectorAll('.nav-item').forEach(function(n){n.classList.remove('on')});if(el){el.classList.add('on');el.setAttribute('data-tab',t)}
-if(t==='dash')loadDash();else if(t==='lb')loadLB();else if(t==='reco')loadReco();else if(t==='heat')loadHeat();else if(t==='evolution')loadEvolution();else if(t==='accounts')loadAccounts();else if(t==='global')loadGlobal()}
+if(t==='dash')loadDash();else if(t==='lb')loadLB();else if(t==='reco')loadReco();else if(t==='heat')loadHeat();else if(t==='accounts')loadAccounts();else if(t==='global')loadGlobal()}
 
 // Helpers
 function fm(n){return n==null?'0':Number(n).toLocaleString('fr-FR')}
@@ -355,22 +354,44 @@ af('/api/streaks').then(function(sd){var streaks=sd.streaks.filter(function(s){r
 
 function loadMultiDay(days){destroyCharts();af('/api/history/'+days).then(function(d){
 var daily=d.history.map(function(x){var tv=x.summaries.reduce(function(a,b){return a+Number(b.total_views)},0);var tl=x.summaries.reduce(function(a,b){return a+Number(b.total_likes)},0);var tc=x.summaries.reduce(function(a,b){return a+Number(b.total_comments)},0);var tp=x.summaries.reduce(function(a,b){return a+Number(b.post_count)},0);return{date:x.date,views:tv,likes:tl,comments:tc,posts:tp,score:tl+tc*3,eng:tv>0?(tl+tc)/tv*100:0}}).reverse();
-var totV=daily.reduce(function(a,b){return a+b.views},0),totL=daily.reduce(function(a,b){return a+b.likes},0),totP=daily.reduce(function(a,b){return a+b.posts},0);
+var totV=daily.reduce(function(a,b){return a+b.views},0),totL=daily.reduce(function(a,b){return a+b.likes},0),totC=daily.reduce(function(a,b){return a+b.comments},0),totP=daily.reduce(function(a,b){return a+b.posts},0);
+var avgEng=totV>0?((totL+totC)/totV*100).toFixed(1):'0.0';
 var h='<div class="sec-title">'+platEmoji()+' '+platLabel()+' — '+days+' derniers jours</div>';
-h+='<div class="kpis">';h+=kpi('📝',''+totP,'Posts','','blue');h+=kpi('👁️',fm(totV),'Vues','','purple');h+=kpi('❤️',fm(totL),'Likes','','pink');h+=kpi('📆',''+days,'Jours','','blue');h+='</div>';
+// KPIs
+h+='<div class="kpis">';
+h+=kpi('📝',fm(totP),'Posts','','blue');
+h+=kpi('👁️',fm(totV),'Vues','','purple');
+h+=kpi('❤️',fm(totL),'Likes','','pink');
+h+=kpi('📊',avgEng+'%','Engagement','','green');
+h+=kpi('📆',''+days,'Jours','','blue');
+h+='</div>';
+// 4 graphes en grille 2x2
 h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">';
-h+='<div class="card"><h3><span class="dot"></span>Vues</h3><div class="chart-wrap"><canvas id="viewsLine"></canvas></div></div>';
-h+='<div class="card"><h3><span class="dot"></span>Engagement %</h3><div class="chart-wrap"><canvas id="engLine"></canvas></div></div>';
+h+='<div class="card"><h3><span class="dot"></span>Vues</h3><div class="chart-wrap"><canvas id="evoViews"></canvas></div></div>';
+h+='<div class="card"><h3><span class="dot"></span>Likes</h3><div class="chart-wrap"><canvas id="evoLikes"></canvas></div></div>';
+h+='<div class="card"><h3><span class="dot"></span>Engagement %</h3><div class="chart-wrap"><canvas id="evoEng"></canvas></div></div>';
+h+='<div class="card"><h3><span class="dot"></span>Posts / jour</h3><div class="chart-wrap"><canvas id="evoPosts"></canvas></div></div>';
 h+='</div>';
 document.getElementById('dashArea').innerHTML=h;
 var labels=daily.map(function(x){return x.date.slice(5)});
-makeChart('viewsLine',{type:'line',data:{labels:labels,datasets:[{label:'Vues',data:daily.map(function(x){return x.views}),borderColor:'#7c3aed',backgroundColor:'rgba(124,58,237,0.1)',fill:true,tension:0.4,pointRadius:3,pointBackgroundColor:'#7c3aed'}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{display:false},ticks:{color:'#64748b',font:{size:10}}},y:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'#64748b'}}}}});
-makeChart('engLine',{type:'line',data:{labels:labels,datasets:[{label:'Engagement %',data:daily.map(function(x){return+x.eng.toFixed(2)}),borderColor:'#10b981',backgroundColor:'rgba(16,185,129,0.1)',fill:true,tension:0.4,pointRadius:3,pointBackgroundColor:'#10b981'}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{display:false},ticks:{color:'#64748b',font:{size:10}}},y:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'#64748b'}}}}})})}
+var lineOpts={responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{display:false},ticks:{color:'#64748b',font:{size:10}}},y:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'#64748b'}}}};
+function lineCfg(data,color){return{type:'line',data:{labels:labels,datasets:[{data:data,borderColor:color,backgroundColor:color.replace(')',',0.1)').replace('rgb','rgba'),fill:true,tension:0.4,pointRadius:3,pointBackgroundColor:color}]},options:lineOpts}}
+makeChart('evoViews',lineCfg(daily.map(function(x){return x.views}),'rgb(124,58,237)'));
+makeChart('evoLikes',lineCfg(daily.map(function(x){return x.likes}),'rgb(225,48,108)'));
+makeChart('evoEng',lineCfg(daily.map(function(x){return+x.eng.toFixed(2)}),'rgb(16,185,129)'));
+makeChart('evoPosts',lineCfg(daily.map(function(x){return x.posts}),'rgb(59,130,246)'))})}
 
-// All-time view: same VA leaderboard as daily but aggregated since the very first post.
+// All-time view: KPIs + best VA + table (totals since beginning)
+// + 4 trend charts on the last 90 days (sliding window for visual trend).
 function loadAllTimeDash(){
   destroyCharts();
-  af('/api/all-time-stats').then(function(d){
+  // Two parallel calls: all-time totals + 90 days history for charts
+  Promise.all([
+    af('/api/all-time-stats'),
+    af('/api/history/90'),
+  ]).then(function(both){
+    var d=both[0];
+    var hist=both[1];
     var s=d.summaries.map(function(x){
       var tv=Number(x.total_views),tl=Number(x.total_likes),tc=Number(x.total_comments),ts=Number(x.total_shares||0),pc=Number(x.post_count);
       x.avg_views=pc>0?Math.round(tv/pc):0;
@@ -398,6 +419,16 @@ function loadAllTimeDash(){
 
     if(s.length>0){var best=s[0];h+='<div class="card" style="border-left:2px solid var(--green)"><div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:16px"><div><div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Meilleur VA all-time</div><div style="font-size:20px;font-weight:800">'+best.va_name+' '+vaBadge(best.badge)+'</div><div style="color:var(--text3);font-size:12px;margin-top:4px">'+best.post_count+' posts · Score '+fm(best.total_score)+' · Eng. '+best.engagement_rate+'%</div></div><div style="display:flex;gap:20px"><div style="text-align:center"><div style="font-size:24px;font-weight:800;color:var(--purple)">'+fm(Number(best.total_views))+'</div><div style="font-size:9px;color:var(--text3);text-transform:uppercase">vues</div></div><div style="text-align:center"><div style="font-size:24px;font-weight:800;color:var(--accent)">'+fm(Number(best.total_likes))+'</div><div style="font-size:9px;color:var(--text3);text-transform:uppercase">likes</div></div></div></div></div>'}
 
+    // 4 trend charts (last 90 days). They show the "shape" over recent history.
+    h+='<div class="sec-title" style="margin-top:20px">Tendance sur les 90 derniers jours</div>';
+    h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">';
+    h+='<div class="card"><h3><span class="dot"></span>Vues</h3><div class="chart-wrap"><canvas id="evoViews"></canvas></div></div>';
+    h+='<div class="card"><h3><span class="dot"></span>Likes</h3><div class="chart-wrap"><canvas id="evoLikes"></canvas></div></div>';
+    h+='<div class="card"><h3><span class="dot"></span>Engagement %</h3><div class="chart-wrap"><canvas id="evoEng"></canvas></div></div>';
+    h+='<div class="card"><h3><span class="dot"></span>Posts / jour</h3><div class="chart-wrap"><canvas id="evoPosts"></canvas></div></div>';
+    h+='</div>';
+
+    // VA leaderboard table
     h+='<div class="card"><h3><span class="dot"></span>Tableau detaille (depuis toujours)</h3><table class="tbl"><thead><tr><th>#</th><th>VA</th><th>Badge</th><th>Posts</th><th>Vues</th><th>Likes</th><th>'+commLabel+'</th><th>'+rtLabel+'</th><th>Score</th><th>Eng.</th><th>Moy/p</th></tr></thead><tbody>';
     s.forEach(function(x,i){
       var m=i<3?['🥇','🥈','🥉'][i]:''+(i+1);
@@ -407,6 +438,22 @@ function loadAllTimeDash(){
     });
     h+='</tbody></table></div>';
     document.getElementById('dashArea').innerHTML=h;
+
+    // Render the 4 trend charts using the 90-day history
+    var daily=hist.history.map(function(x){
+      var tv=x.summaries.reduce(function(a,b){return a+Number(b.total_views)},0);
+      var tl=x.summaries.reduce(function(a,b){return a+Number(b.total_likes)},0);
+      var tc=x.summaries.reduce(function(a,b){return a+Number(b.total_comments)},0);
+      var tp=x.summaries.reduce(function(a,b){return a+Number(b.post_count)},0);
+      return{date:x.date,views:tv,likes:tl,comments:tc,posts:tp,eng:tv>0?(tl+tc)/tv*100:0};
+    }).reverse();
+    var labels=daily.map(function(x){return x.date.slice(5)});
+    var lineOpts={responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{display:false},ticks:{color:'#64748b',font:{size:9},maxRotation:0,autoSkipPadding:8}},y:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'#64748b'}}}};
+    function lineCfg(data,color){return{type:'line',data:{labels:labels,datasets:[{data:data,borderColor:color,backgroundColor:color.replace(')',',0.1)').replace('rgb','rgba'),fill:true,tension:0.4,pointRadius:1,pointBackgroundColor:color}]},options:lineOpts}}
+    makeChart('evoViews',lineCfg(daily.map(function(x){return x.views}),'rgb(124,58,237)'));
+    makeChart('evoLikes',lineCfg(daily.map(function(x){return x.likes}),'rgb(225,48,108)'));
+    makeChart('evoEng',lineCfg(daily.map(function(x){return+x.eng.toFixed(2)}),'rgb(16,185,129)'));
+    makeChart('evoPosts',lineCfg(daily.map(function(x){return x.posts}),'rgb(59,130,246)'));
   }).catch(function(e){
     document.getElementById('dashArea').innerHTML='<div class="card" style="text-align:center;padding:40px;color:var(--red)">Erreur: '+(e.message||'?')+'</div>';
   });
@@ -426,17 +473,23 @@ h+='</tbody></table></div>';document.getElementById('lbArea').innerHTML=h})}
 // User can click a perf tier (Viral/Bon/Moyen/Flop) to see the matching posts.
 // A search bar filters the visible posts by VA name or caption.
 function loadReco(){
-  var h='<div class="filters" style="flex-wrap:wrap;gap:8px">';
-  h+='<select id="recoPeriod" onchange="onRecoPeriodChange()" style="padding:8px 12px;border-radius:8px;background:var(--bg3);color:var(--text1);border:1px solid var(--border)">';
-  h+='<option value="today">Aujourd\'hui</option>';
-  h+='<option value="7d" selected>7 derniers jours</option>';
-  h+='<option value="15d">15 derniers jours</option>';
-  h+='<option value="30d">30 derniers jours</option>';
-  h+='<option value="all">Depuis toujours</option>';
-  h+='<option value="custom">Date personnalisee</option>';
-  h+='</select>';
-  h+='<div id="recoCustomDates" style="display:none;gap:8px;align-items:center"><input type="date" id="recoFrom" value="'+dDate(7)+'"><span style="color:var(--text3)">a</span><input type="date" id="recoTo" value="'+dDate(0)+'"></div>';
-  h+='<button class="btn-sm" onclick="loadRecoData()">Analyser</button>';
+  // Period buttons (like Dashboard) — RECO_PERIOD stores the active one.
+  var periods=[
+    {k:'today',l:'Aujourd\'hui'},
+    {k:'7d',l:'7 jours'},
+    {k:'15d',l:'15 jours'},
+    {k:'30d',l:'30 jours'},
+    {k:'all',l:'Depuis toujours'}
+  ];
+  if(!window.RECO_PERIOD)window.RECO_PERIOD='7d';
+
+  var h='<div class="filters" style="flex-wrap:wrap;gap:8px;align-items:center">';
+  periods.forEach(function(p){
+    var active=(window.RECO_PERIOD===p.k);
+    h+='<button class="btn-sm '+(active?'':'btn-off')+'" onclick="setRecoPeriod(\''+p.k+'\')">'+p.l+'</button>';
+  });
+  h+='<button class="btn-sm '+(window.RECO_PERIOD==='custom'?'':'btn-off')+'" onclick="setRecoPeriod(\'custom\')">Custom</button>';
+  h+='<div id="recoCustomDates" style="display:'+(window.RECO_PERIOD==='custom'?'flex':'none')+';gap:8px;align-items:center"><input type="date" id="recoFrom" value="'+dDate(7)+'"><span style="color:var(--text3)">a</span><input type="date" id="recoTo" value="'+dDate(0)+'"><button class="btn-sm" onclick="loadRecoData()">Charger</button></div>';
   h+='<select id="recoVaSel" onchange="RECO_VA=this.value;renderReco()" style="padding:8px 12px;border-radius:8px;background:var(--bg3);color:var(--text1);border:1px solid var(--border);min-width:140px"><option value="all">Tous VA</option></select>';
   h+='<input type="text" id="recoSearch" placeholder="Rechercher VA ou caption..." oninput="renderRecoTier()" style="flex:1;min-width:180px;padding:8px 12px;border-radius:8px;background:var(--bg3);color:var(--text1);border:1px solid var(--border)">';
   h+='</div><div id="recoArea"></div>';
@@ -444,17 +497,24 @@ function loadReco(){
   loadRecoData();
 }
 
-function onRecoPeriodChange(){
-  var sel=document.getElementById('recoPeriod').value;
-  document.getElementById('recoCustomDates').style.display=(sel==='custom')?'flex':'none';
+// Click on a period button: activate it, refresh the page (which re-renders the buttons too).
+function setRecoPeriod(p){
+  window.RECO_PERIOD=p;
+  if(p==='custom'){
+    // Just toggle the visibility of date inputs without re-fetching
+    loadReco();
+    return;
+  }
+  loadReco();
 }
 
 // Build the API URL according to the selected period filter.
 function buildRecoUrl(){
-  var sel=document.getElementById('recoPeriod').value;
+  var sel=window.RECO_PERIOD||'7d';
   if(sel==='custom'){
-    var from=document.getElementById('recoFrom').value;
-    var to=document.getElementById('recoTo').value;
+    var from=(document.getElementById('recoFrom')||{}).value;
+    var to=(document.getElementById('recoTo')||{}).value;
+    if(!from||!to)return '/api/recommendations?period=7d';
     return '/api/recommendations?from='+encodeURIComponent(from)+'&to='+encodeURIComponent(to);
   }
   return '/api/recommendations?period='+sel;
@@ -623,26 +683,6 @@ for(var i=0;i<24;i++){var dd=hrs[i];var intensity=maxV>0?dd.avg_views/maxV:0;var
 h+='</div></div>';
 document.getElementById('heatArea').innerHTML=h;
 makeChart('hourlyChart',{type:'bar',data:{labels:hrs.map(function(h){return h.hour+'h'}),datasets:[{label:'Vues moy.',data:hrs.map(function(h){return h.avg_views}),backgroundColor:hrs.map(function(h){return h.post_count===0?'rgba(255,255,255,0.05)':h.avg_views>=maxV*0.7?'rgba(16,185,129,0.7)':h.avg_views>=maxV*0.3?'rgba(245,158,11,0.6)':'rgba(239,68,68,0.5)'}),borderRadius:4,borderSkipped:false}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{display:false},ticks:{color:'#64748b',font:{size:9}}},y:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'#64748b'}}}}})})}
-
-// ==================== EVOLUTION (NEW — line charts over time) ====================
-function loadEvolution(){destroyCharts();var h='<div class="filters"><select id="evoDays"><option value="7">7 jours</option><option value="14" selected>14 jours</option><option value="30">30 jours</option><option value="60">60 jours</option><option value="90">90 jours</option></select><button class="btn-sm" onclick="loadEvoData()">Charger</button></div><div id="evoArea"><p style="color:var(--text3);text-align:center;padding:60px">Chargement...</p></div>';document.getElementById('content').innerHTML=h;loadEvoData()}
-function loadEvoData(){destroyCharts();var days=document.getElementById('evoDays').value;af('/api/history/'+days).then(function(d){
-var daily=d.history.map(function(x){var tv=x.summaries.reduce(function(a,b){return a+Number(b.total_views)},0);var tl=x.summaries.reduce(function(a,b){return a+Number(b.total_likes)},0);var tc=x.summaries.reduce(function(a,b){return a+Number(b.total_comments)},0);var tp=x.summaries.reduce(function(a,b){return a+Number(b.post_count)},0);return{date:x.date,views:tv,likes:tl,comments:tc,posts:tp,eng:tv>0?(tl+tc)/tv*100:0,score:tl+tc*3,summaries:x.summaries}}).reverse();
-var labels=daily.map(function(x){return x.date.slice(5)});
-var h='<div class="sec-title">'+platEmoji()+' Evolution '+platLabel()+' — '+days+'j</div>';
-h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">';
-h+='<div class="card"><h3><span class="dot"></span>Vues</h3><div class="chart-wrap"><canvas id="evoViews"></canvas></div></div>';
-h+='<div class="card"><h3><span class="dot"></span>Likes</h3><div class="chart-wrap"><canvas id="evoLikes"></canvas></div></div>';
-h+='<div class="card"><h3><span class="dot"></span>Engagement %</h3><div class="chart-wrap"><canvas id="evoEng"></canvas></div></div>';
-h+='<div class="card"><h3><span class="dot"></span>Posts / jour</h3><div class="chart-wrap"><canvas id="evoPosts"></canvas></div></div>';
-h+='</div>';
-document.getElementById('evoArea').innerHTML=h;
-var lineOpts={responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{display:false},ticks:{color:'#64748b',font:{size:10}}},y:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'#64748b'}}}};
-function lineCfg(data,color){return{type:'line',data:{labels:labels,datasets:[{data:data,borderColor:color,backgroundColor:color.replace(')',',0.1)').replace('rgb','rgba'),fill:true,tension:0.4,pointRadius:3,pointBackgroundColor:color}]},options:lineOpts}}
-makeChart('evoViews',lineCfg(daily.map(function(x){return x.views}),'rgb(124,58,237)'));
-makeChart('evoLikes',lineCfg(daily.map(function(x){return x.likes}),'rgb(225,48,108)'));
-makeChart('evoEng',lineCfg(daily.map(function(x){return+x.eng.toFixed(2)}),'rgb(16,185,129)'));
-makeChart('evoPosts',lineCfg(daily.map(function(x){return x.posts}),'rgb(59,130,246)'))})}
 
 // ==================== GLOBAL (NEW — combined IG + Twitter) ====================
 function loadGlobal(){destroyCharts();
