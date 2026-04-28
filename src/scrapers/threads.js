@@ -492,7 +492,16 @@ async function fetchViaMobileAPI(postCode, account, ua) {
         if (parsed) {
           return { success: true, ...parsed };
         }
-        console.log('[Threads API] Could not parse stats from ' + ep.label + ' response (body preview: ' + resp.body.substring(0, 300) + ')');
+        // Body got but couldn't parse — dump details to identify what Meta returned
+        var preview = resp.body.substring(0, 1500);
+        console.log('[Threads API DUMP] Response from ' + ep.label + ' (status=' + resp.status + '):');
+        console.log('[Threads API DUMP] Content-Type detection: HTML=' + /^<!DOCTYPE|<html/i.test(preview) + ' JSON=' + /^[\[\{]/.test(preview.trim()));
+        console.log('[Threads API DUMP] First 1500 chars: ' + preview);
+        // Look for tell-tale signs
+        if (/login|Connexion|Iniciar sesi/i.test(preview)) console.log('[Threads API DUMP] -> LOGIN PAGE detected (cookies invalid?)');
+        if (/captcha|Verify|Confirm/i.test(preview)) console.log('[Threads API DUMP] -> CAPTCHA / VERIFICATION detected');
+        if (/restricted|suspended|disabled/i.test(preview)) console.log('[Threads API DUMP] -> ACCOUNT RESTRICTED detected');
+        if (/checkpoint/i.test(preview)) console.log('[Threads API DUMP] -> CHECKPOINT detected (Meta wants 2FA verification)');
       }
     } catch (e) {
       console.log('[Threads API] ' + ep.label + ' threw: ' + e.message);
