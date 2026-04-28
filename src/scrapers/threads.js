@@ -197,12 +197,36 @@ async function scrapePost(url) {
         var raw = m[1];
         var suf = (m[2] || '').toUpperCase();
         var num;
-        if (/^[\d]{1,3},[\d]{1,3}$/.test(raw) && suf) {
+
+        // When a K/M/B suffix is present, the number is small (1-999.99) and
+        // any . or , is a DECIMAL separator. Examples: "75.1K", "1,234K" (rare),
+        // "24,5K", "1.5M".
+        if (suf) {
+          // Normalize: replace comma with dot, parse as float.
+          // (Threads never uses thousand separators with K/M suffix.)
           num = parseFloat(raw.replace(',', '.'));
         } else {
-          num = parseFloat(raw.replace(/[.,]/g, ''));
-          if (isNaN(num)) num = parseFloat(raw.replace(',', '.'));
+          // No suffix: large numbers like "1,234" or "12.345" or "12 345".
+          // Determine if separator is decimal or thousand.
+          // Heuristic: if the part after separator has exactly 3 digits AND
+          // this is likely a count (no other context), treat as thousand sep.
+          // Examples: "1,234" -> 1234 (thousand), "1.234" -> 1234 (thousand)
+          // But "24,5" -> 24.5 (decimal — but rare without suffix for counts)
+          if (/^[\d]+[.,][\d]{3}$/.test(raw)) {
+            // E.g. "1,234" or "12.345" — thousand separator
+            num = parseFloat(raw.replace(/[.,]/g, ''));
+          } else if (/^[\d]+([.,][\d]{3})+$/.test(raw)) {
+            // Multiple groups: "1,234,567"
+            num = parseFloat(raw.replace(/[.,]/g, ''));
+          } else if (/^[\d]+[.,][\d]{1,2}$/.test(raw)) {
+            // E.g. "24,5" or "12.5" — decimal, but for counts this is unusual.
+            // Treat as decimal anyway.
+            num = parseFloat(raw.replace(',', '.'));
+          } else {
+            num = parseFloat(raw.replace(/[.,]/g, ''));
+          }
         }
+
         if (isNaN(num)) return 0;
         if (suf === 'K') num *= 1000;
         if (suf === 'M') num *= 1000000;
