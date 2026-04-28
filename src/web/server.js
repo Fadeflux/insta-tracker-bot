@@ -1076,6 +1076,60 @@ function createWebServer() {
     } catch(err) { res.status(500).json({ error: err.message }); }
   });
 
+  // === Soft delete a post (admin or manager-of-platform) ===
+  // The post stays in the DB with deleted_at filled. It's hidden from rankings
+  // and totals but can be restored. Permission check: managers can only delete
+  // posts on their platform; admins can delete anywhere.
+  app.post('/api/posts/:id/delete', checkAuth, checkManagerOrAdmin, async function(req, res) {
+    try {
+      var postId = parseInt(req.params.id, 10);
+      if (!postId || isNaN(postId)) return res.status(400).json({ error: 'Invalid post ID' });
+
+      var post = await db.getPostBasics(postId);
+      if (!post) return res.status(404).json({ error: 'Post non trouve' });
+      if (post.deleted_at) return res.status(400).json({ error: 'Post deja supprime' });
+
+      // Permission check for managers: must match their assigned platform
+      if (req.userRole === 'manager') {
+        var allowed = getUserAllowedPlatforms(req);
+        if (allowed && allowed.length > 0 && allowed.indexOf(post.platform) === -1) {
+          return res.status(403).json({ error: 'Tu ne peux supprimer que les posts de ta plateforme' });
+        }
+      }
+
+      var deletedBy = req.username || (req.userRole + '_unknown');
+      var deleted = await db.softDeletePost(postId, deletedBy);
+      if (!deleted) return res.status(500).json({ error: 'Suppression echouee' });
+
+      res.json({ success: true, message: 'Post supprime' });
+    } catch(err) { res.status(500).json({ error: err.message }); }
+  });
+
+  // === Restore a soft-deleted post ===
+  app.post('/api/posts/:id/restore', checkAuth, checkManagerOrAdmin, async function(req, res) {
+    try {
+      var postId = parseInt(req.params.id, 10);
+      if (!postId || isNaN(postId)) return res.status(400).json({ error: 'Invalid post ID' });
+
+      var post = await db.getPostBasics(postId);
+      if (!post) return res.status(404).json({ error: 'Post non trouve' });
+      if (!post.deleted_at) return res.status(400).json({ error: 'Post n\'est pas supprime' });
+
+      // Same permission check as delete
+      if (req.userRole === 'manager') {
+        var allowed = getUserAllowedPlatforms(req);
+        if (allowed && allowed.length > 0 && allowed.indexOf(post.platform) === -1) {
+          return res.status(403).json({ error: 'Tu ne peux restaurer que les posts de ta plateforme' });
+        }
+      }
+
+      var restored = await db.restorePost(postId);
+      if (!restored) return res.status(500).json({ error: 'Restauration echouee' });
+
+      res.json({ success: true, message: 'Post restaure' });
+    } catch(err) { res.status(500).json({ error: err.message }); }
+  });
+
   // Force the daily summary for a platform (useful for testing or re-sending).
   app.post('/api/admin/force-summary', checkAuth, checkAdmin, async function(req, res) {
     try {
