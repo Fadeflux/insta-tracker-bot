@@ -133,6 +133,24 @@ DO $$ BEGIN
   END IF;
   CREATE INDEX IF NOT EXISTS idx_posts_deleted_at ON posts(deleted_at);
 
+  -- dashboard_users.platform: relax constraint to allow 'threads' and
+  -- comma-separated combos like 'instagram,threads,geelark'. The original
+  -- definition was VARCHAR(16) CHECK (platform IN (4 values)), which rejects
+  -- 'threads' AND any multi-platform combo. We widen the column and drop
+  -- the CHECK so the application layer is the source of truth for validation.
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='dashboard_users' AND column_name='platform') THEN
+    -- Widen to 64 chars so combos like 'instagram,twitter,geelark,threads' fit
+    BEGIN
+      ALTER TABLE dashboard_users ALTER COLUMN platform TYPE VARCHAR(64);
+    EXCEPTION WHEN OTHERS THEN NULL;
+    END;
+    -- Drop the CHECK constraint by name (matches what Postgres auto-generates)
+    BEGIN
+      ALTER TABLE dashboard_users DROP CONSTRAINT IF EXISTS dashboard_users_platform_check;
+    EXCEPTION WHEN OTHERS THEN NULL;
+    END;
+  END IF;
+
 END $$;
 
 -- Idempotency table for slot reminders (prevents double-sending if cron fires twice)
@@ -179,7 +197,7 @@ CREATE TABLE IF NOT EXISTS dashboard_users (
   username      VARCHAR(64) UNIQUE NOT NULL,
   password_hash VARCHAR(255) NOT NULL,
   role          VARCHAR(16) NOT NULL DEFAULT 'va' CHECK (role IN ('admin', 'manager', 'va')),
-  platform      VARCHAR(16) NOT NULL DEFAULT 'all' CHECK (platform IN ('instagram', 'twitter', 'geelark', 'all')),
+  platform      VARCHAR(64) NOT NULL DEFAULT 'all',
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
