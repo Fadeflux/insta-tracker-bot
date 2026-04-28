@@ -239,7 +239,6 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(-
 <div class="nav">
 <div class="nav-item on" onclick="go('dash',this)">Dashboard</div>
 <div class="nav-item" onclick="go('lb',this)">Classement</div>
-<div class="nav-item" onclick="go('top',this)">Top Posts</div>
 <div class="nav-item" onclick="go('reco',this)">Recommandations</div>
 <div class="nav-item" onclick="go('heat',this)">Heures</div>
 <div class="nav-item" onclick="go('evolution',this)">Evolution</div>
@@ -280,7 +279,7 @@ function showApp(){document.getElementById('loginPage').style.display='none';doc
 function af(u){var sep=u.indexOf('?')!==-1?'&':'?';var platParam=PLAT==='all'?'':sep+'platform='+PLAT;var url=A+u+(PLAT==='all'?'':platParam);return fetch(url,{headers:{'X-Auth-Token':T}}).then(function(r){if(r.status===401){doLogout();throw new Error('x')}return r.json()})}
 
 function go(t,el){document.querySelectorAll('.nav-item').forEach(function(n){n.classList.remove('on')});if(el){el.classList.add('on');el.setAttribute('data-tab',t)}
-if(t==='dash')loadDash();else if(t==='lb')loadLB();else if(t==='top')loadTop();else if(t==='reco')loadReco();else if(t==='heat')loadHeat();else if(t==='evolution')loadEvolution();else if(t==='accounts')loadAccounts();else if(t==='global')loadGlobal()}
+if(t==='dash')loadDash();else if(t==='lb')loadLB();else if(t==='reco')loadReco();else if(t==='heat')loadHeat();else if(t==='evolution')loadEvolution();else if(t==='accounts')loadAccounts();else if(t==='global')loadGlobal()}
 
 // Helpers
 function fm(n){return n==null?'0':Number(n).toLocaleString('fr-FR')}
@@ -374,16 +373,6 @@ h+='<div class="card"><table class="tbl"><thead><tr><th>#</th><th>VA</th><th>Bad
 r.forEach(function(x,i){var m=i<3?['🥇','🥈','🥉'][i]:''+(i+1);var cls=Number(x.post_count)>=6?'ok':'warn';h+='<tr onclick="openVA(\''+x.va_discord_id+'\',\''+x.va_name+'\')"><td>'+m+'</td><td><b>'+x.va_name+'</b></td><td>'+vaBadge(x.badge)+'</td><td class="'+cls+'">'+x.post_count+'/6</td><td>'+fm(Number(x.total_views))+'</td><td>'+fm(Number(x.total_likes))+'</td><td style="color:var(--orange);font-weight:700">'+fm(x.total_score)+'</td><td>'+x.engagement_rate+'%</td></tr>'});
 h+='</tbody></table></div>';document.getElementById('lbArea').innerHTML=h})}
 
-// ==================== TOP POSTS (with filters) ====================
-var TOP_DATA=[],TOP_F='all',TOP_VA='all';
-function loadTop(){var h='<div class="filters"><input type="date" id="topDate" value="'+dDate(0)+'"><button class="btn-sm" onclick="loadTopData()">Charger</button><select id="topFilter" onchange="TOP_F=this.value;renderTop()"><option value="all">Tous</option><option value="viral">🔥 Viral</option><option value="bon">✅ Bon</option><option value="moyen">➡️ Moyen</option><option value="flop">⬇️ Flop</option></select><select id="topVaSel" onchange="TOP_VA=this.value;renderTop()"><option value="all">Tous VA</option></select><input type="text" id="topSearch" placeholder="Rechercher..." oninput="renderTop()"></div><div id="topArea"></div>';document.getElementById('content').innerHTML=h;loadTopData()}
-function loadTopData(){af('/api/top-posts?date='+document.getElementById('topDate').value).then(function(d){TOP_DATA=d.posts;var vas=[...new Set(d.posts.map(function(p){return p.va_name}))];var sel=document.getElementById('topVaSel');sel.innerHTML='<option value="all">Tous VA</option>';vas.forEach(function(v){sel.innerHTML+='<option>'+v+'</option>'});renderTop()})}
-function renderTop(){var search=(document.getElementById('topSearch')||{value:''}).value.toLowerCase();var filtered=TOP_DATA.filter(function(p){var perf=p.perf||perfOf(Number(p.views)||0);if(TOP_F!=='all'&&perf!==TOP_F)return false;if(TOP_VA!=='all'&&p.va_name!==TOP_VA)return false;if(search&&p.va_name.toLowerCase().indexOf(search)===-1)return false;return true});
-var h='<div class="card"><h3><span class="dot"></span>'+filtered.length+' post(s) — '+platLabel()+'</h3>';
-filtered.forEach(function(p){var perf=p.perf||perfOf(Number(p.views)||0);var eng=p.engagement||engOf(p);var platform=p.platform||PLAT;h+='<div class="post-card" style="border-left:2px solid '+perfColor(perf)+'"><div class="post-header"><div><span style="font-weight:700">'+p.va_name+'</span> '+perfBadge(perf)+'<div style="font-size:10px;color:var(--text3);margin-top:3px">'+new Date(p.created_at).toLocaleString('fr-FR')+'</div></div><a href="'+p.url+'" target="_blank" class="post-link" style="color:var(--accent);border-color:var(--accent)">'+platLinkLabel(platform)+'</a></div><div class="post-stats"><span>👁️ '+(p.views||0)+'</span><span>❤️ '+(p.likes||0)+'</span><span>💬 '+(p.comments||0)+'</span><span>🏆 '+fm(p.score||scoreOf(p))+'</span><span>📊 '+(eng*100).toFixed(1)+'%</span></div></div>'});
-if(filtered.length===0)h+='<p style="color:var(--text3);text-align:center;padding:30px">Aucun post</p>';
-h+='</div>';document.getElementById('topArea').innerHTML=h}
-
 // ==================== RECOMMANDATIONS ====================
 // Three filter modes:
 //   - period: today / 7d / 15d / 30d / all
@@ -402,6 +391,7 @@ function loadReco(){
   h+='</select>';
   h+='<div id="recoCustomDates" style="display:none;gap:8px;align-items:center"><input type="date" id="recoFrom" value="'+dDate(7)+'"><span style="color:var(--text3)">a</span><input type="date" id="recoTo" value="'+dDate(0)+'"></div>';
   h+='<button class="btn-sm" onclick="loadRecoData()">Analyser</button>';
+  h+='<select id="recoVaSel" onchange="RECO_VA=this.value;renderReco()" style="padding:8px 12px;border-radius:8px;background:var(--bg3);color:var(--text1);border:1px solid var(--border);min-width:140px"><option value="all">Tous VA</option></select>';
   h+='<input type="text" id="recoSearch" placeholder="Rechercher VA ou caption..." oninput="renderRecoTier()" style="flex:1;min-width:180px;padding:8px 12px;border-radius:8px;background:var(--bg3);color:var(--text1);border:1px solid var(--border)">';
   h+='</div><div id="recoArea"></div>';
   document.getElementById('content').innerHTML=h;
@@ -428,6 +418,29 @@ function loadRecoData(){
   af(buildRecoUrl()).then(function(d){
     window.RECO_DATA=d;
     window.RECO_TIER='viral'; // default selected tier
+    window.RECO_VA='all';
+
+    // Populate the VA dropdown from all posts across all tiers
+    var vaSet={};
+    if(d.postsByTier){
+      ['viral','bon','moyen','flop'].forEach(function(t){
+        (d.postsByTier[t]||[]).forEach(function(p){
+          if(p.va_name)vaSet[p.va_name]=true;
+        });
+      });
+    }
+    var vas=Object.keys(vaSet).sort();
+    var sel=document.getElementById('recoVaSel');
+    if(sel){
+      sel.innerHTML='<option value="all">Tous VA</option>';
+      vas.forEach(function(v){
+        var opt=document.createElement('option');
+        opt.value=v;opt.textContent=v;
+        sel.appendChild(opt);
+      });
+      sel.value='all';
+    }
+
     renderReco();
   }).catch(function(e){
     document.getElementById('recoArea').innerHTML='<div class="card" style="text-align:center;padding:40px;color:var(--red)">Erreur: '+(e.message||'?')+'</div>';
@@ -436,16 +449,37 @@ function loadRecoData(){
 
 function renderReco(){
   var d=window.RECO_DATA;if(!d)return;
-  var k=d.kpis;
+  var va=window.RECO_VA||'all';
+
+  // Compute KPIs/distribution either from full data or filtered by VA.
+  // When a VA is selected, we reduce the postsByTier to that VA only and
+  // recompute the counts so what we show is consistent with the filter.
+  var perfCount,totalPosts,nuggetsCount;
+  if(va==='all'){
+    perfCount=d.kpis.perfCount;
+    totalPosts=d.kpis.totalPosts;
+    nuggetsCount=(d.nuggets||[]).length;
+  } else {
+    perfCount={viral:0,bon:0,moyen:0,flop:0};
+    ['viral','bon','moyen','flop'].forEach(function(t){
+      perfCount[t]=(d.postsByTier[t]||[]).filter(function(p){return p.va_name===va}).length;
+    });
+    totalPosts=perfCount.viral+perfCount.bon+perfCount.moyen+perfCount.flop;
+    nuggetsCount=perfCount.viral+perfCount.bon;
+  }
+  var pctPerf=totalPosts>0?Math.round((perfCount.viral+perfCount.bon)/totalPosts*100):0;
+  var pctFlop=totalPosts>0?Math.round(perfCount.flop/totalPosts*100):0;
+
+  var vaLabel=(va==='all')?'':' — '+escapeHtml(va);
   var h='<div class="kpis">';
-  h+=kpi('📝',''+k.totalPosts,'Posts','','blue');
-  h+=kpi('✅',k.pctPerf+'%','Performants','','green');
-  h+=kpi('⬇️',k.pctFlop+'%','Flops','','red');
-  h+=kpi('💎',''+(d.nuggets?d.nuggets.length:0),'Pepites','','purple');
+  h+=kpi('📝',''+totalPosts,'Posts'+(vaLabel?' '+escapeHtml(va):''),'','blue');
+  h+=kpi('✅',pctPerf+'%','Performants','','green');
+  h+=kpi('⬇️',pctFlop+'%','Flops','','red');
+  h+=kpi('💎',''+nuggetsCount,'Pepites','','purple');
   h+='</div>';
 
   // Clickable distribution: clicking a tier card filters the posts shown below
-  h+='<div class="card"><h3><span class="dot" style="background:var(--green)"></span>Distribution <span style="font-size:11px;color:var(--text3);font-weight:400">— clique sur une categorie pour voir les posts</span></h3>';
+  h+='<div class="card"><h3><span class="dot" style="background:var(--green)"></span>Distribution'+vaLabel+' <span style="font-size:11px;color:var(--text3);font-weight:400">— clique sur une categorie pour voir les posts</span></h3>';
   h+='<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px">';
   var tiers=[
     {k:'viral',l:'Viral',c:'#ff00ff'},
@@ -454,11 +488,11 @@ function renderReco(){
     {k:'flop',l:'Flop',c:'#ef4444'}
   ];
   tiers.forEach(function(cat){
-    var pct=k.totalPosts>0?Math.round(k.perfCount[cat.k]/k.totalPosts*100):0;
+    var pct=totalPosts>0?Math.round(perfCount[cat.k]/totalPosts*100):0;
     var isActive=(window.RECO_TIER===cat.k);
     var ringStyle=isActive?'box-shadow:0 0 0 2px '+cat.c+';transform:translateY(-2px)':'';
     h+='<div onclick="selectRecoTier(\''+cat.k+'\')" style="cursor:pointer;background:var(--bg3);border-radius:10px;padding:16px;text-align:center;border-top:2px solid '+cat.c+';transition:all 0.15s;'+ringStyle+'">';
-    h+='<div style="font-size:28px;font-weight:800;color:'+cat.c+'">'+k.perfCount[cat.k]+'</div>';
+    h+='<div style="font-size:28px;font-weight:800;color:'+cat.c+'">'+perfCount[cat.k]+'</div>';
     h+='<div style="font-size:10px;color:var(--text3);margin-top:4px">'+cat.l+' ('+pct+'%)</div>';
     h+='</div>';
   });
@@ -476,13 +510,17 @@ function selectRecoTier(tier){
   renderReco();
 }
 
-// Render the posts of the currently selected tier, applying the search filter.
+// Render the posts of the currently selected tier, applying VA filter + search.
 function renderRecoTier(){
   var d=window.RECO_DATA;if(!d||!d.postsByTier)return;
   var tier=window.RECO_TIER||'viral';
   var posts=(d.postsByTier[tier]||[]).slice();
   var searchEl=document.getElementById('recoSearch');
   var search=searchEl?searchEl.value.toLowerCase():'';
+  var va=window.RECO_VA||'all';
+  if(va!=='all'){
+    posts=posts.filter(function(p){return p.va_name===va});
+  }
   if(search){
     posts=posts.filter(function(p){
       return (p.va_name||'').toLowerCase().indexOf(search)!==-1
@@ -492,9 +530,12 @@ function renderRecoTier(){
   }
   var tierLabels={viral:'Viral',bon:'Bon',moyen:'Moyen',flop:'Flop'};
   var tierColors={viral:'#ff00ff',bon:'#10b981',moyen:'#f59e0b',flop:'#ef4444'};
-  var h='<div class="card"><h3><span class="dot" style="background:'+tierColors[tier]+'"></span>'+posts.length+' posts '+tierLabels[tier]+(search?' (filtre actif)':'')+'</h3>';
+  var subtitle='';
+  if(va!=='all')subtitle+=' — '+escapeHtml(va);
+  if(search)subtitle+=' (filtre actif)';
+  var h='<div class="card"><h3><span class="dot" style="background:'+tierColors[tier]+'"></span>'+posts.length+' posts '+tierLabels[tier]+subtitle+'</h3>';
   if(posts.length===0){
-    h+='<p style="color:var(--text3);text-align:center;padding:30px">Aucun post dans cette categorie pour la periode selectionnee.</p>';
+    h+='<p style="color:var(--text3);text-align:center;padding:30px">Aucun post dans cette categorie pour les filtres selectionnes.</p>';
   } else {
     posts.slice(0,200).forEach(function(p){
       var perf=p.perf||perfOf(Number(p.views)||0);
