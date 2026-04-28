@@ -122,6 +122,17 @@ DO $$ BEGIN
       CHECK (platform IN ('instagram', 'twitter', 'geelark', 'threads'));
   END IF;
 
+  -- Soft delete columns: when deleted_at IS NOT NULL, the post is hidden from
+  -- normal queries but still in the database (recoverable). deleted_by stores
+  -- who pressed the delete button (for audit / "deleted by X on Y" display).
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='posts' AND column_name='deleted_at') THEN
+    ALTER TABLE posts ADD COLUMN deleted_at TIMESTAMPTZ;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='posts' AND column_name='deleted_by') THEN
+    ALTER TABLE posts ADD COLUMN deleted_by VARCHAR(64);
+  END IF;
+  CREATE INDEX IF NOT EXISTS idx_posts_deleted_at ON posts(deleted_at);
+
 END $$;
 
 -- Idempotency table for slot reminders (prevents double-sending if cron fires twice)
