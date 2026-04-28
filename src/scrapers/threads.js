@@ -58,11 +58,42 @@ async function scrapePost(url) {
   result.username = extractUsername(url);
 
   var ua = getRandomUA();
-  var normalizedUrl = url.split('?')[0].replace('threads.com', 'threads.net');
 
-  // === Cascade de strategies ===
-  // Threads peut bloquer via threads.net selon la geo IP du proxy. On tente
-  // 3 strategies dans l'ordre, en gardant le HTML le plus consistant.
+  // === STRATEGY 0: Authenticated mobile API call (preferred when accounts are configured) ===
+  // Uses Meta's internal mobile API endpoint (i.instagram.com/api/v1/...).
+  // This requires a logged-in Threads account (cookies in env vars).
+  // If no account is configured or if the API fails, we fall back to anonymous HTML scraping.
+  var threadsAccounts = require('./threadsAccounts');
+  var account = threadsAccounts.getNextAccount();
+  if (account) {
+    console.log('[Threads] Using account #' + account.index + ' for ' + postCode);
+    try {
+      var apiResult = await fetchViaMobileAPI(postCode, account, ua);
+      if (apiResult && apiResult.success) {
+        threadsAccounts.markAccountSuccess(account);
+        // Merge into result and return early — no need for HTML fallback
+        if (apiResult.username) result.username = apiResult.username;
+        result.views = apiResult.views || 0;
+        result.likes = apiResult.likes || 0;
+        result.comments = apiResult.comments || 0;
+        result.shares = apiResult.shares || 0;
+        result.postedAt = apiResult.postedAt || null;
+        console.log('[Threads] API OK for ' + postCode + ' — views=' + result.views + ' likes=' + result.likes + ' comments=' + result.comments + ' (via account #' + account.index + ')');
+        return result;
+      } else if (apiResult) {
+        threadsAccounts.markAccountError(account, apiResult.errorType || 'unknown', apiResult.errorMessage || '?');
+        console.log('[Threads] API failed for ' + postCode + ': ' + (apiResult.errorMessage || 'unknown'));
+      }
+    } catch (e) {
+      threadsAccounts.markAccountError(account, 'unknown', e.message);
+      console.log('[Threads] API exception for ' + postCode + ': ' + e.message);
+    }
+    // Fall through to HTML scraping below (which will likely also fail without auth, but worth trying)
+  } else {
+    console.log('[Threads] No accounts configured, using anonymous HTML scraping (likely to return 0)');
+  }
+
+  // === Cascade de strategies HTML (fallback anonyme) ===
   var urlNet = url.split('?')[0].replace('threads.com', 'threads.net');
   var urlCom = url.split('?')[0].replace('threads.net', 'threads.com');
 
@@ -92,7 +123,7 @@ async function scrapePost(url) {
 
   if (!html || html.length < 1000) {
     result.error = 'All strategies returned empty/short HTML';
-    console.log('[Threads DEBUG] All 4 strategies failed. Likely the proxy blocks Meta Threads or Threads requires login.');
+    console.log('[Threads DEBUG] All HTML strategies failed and no API account was usable.');
     return result;
   }
 
@@ -400,7 +431,223 @@ function decodeChunked(body) {
   return out;
 }
 
+// === Mobile API fetch (authenticated) ===
+// Uses Meta's internal i.instagram.com endpoints with a logged-in Threads session.
+// We try a couple of endpoint variants because Meta has historically used different
+// ones over time. If one returns 200 with valid JSON, we use it. Otherwise we try the next.
+//
+// Headers required:
+//   Cookie: sessionid=...; csrftoken=...; ds_user_id=...
+//   X-CSRFToken: <csrftoken>
+//   X-IG-App-ID: 238260118697367   (Threads web app id, public)
+//   X-FB-LSD: <random>             (anti-CSRF, but seems optional)
+//   X-ASBD-ID: 198387
+//   User-Agent: Barcelona <ver> Android (...) — mobile-style; or web Chrome
+//
+// Returns:
+//   { success: true, views, likes, comments, shares, username, postedAt }
+//   { success: false, errorType: 'banned'|'auth_failed'|'rate_limited'|'unknown', errorMessage }
+async function fetchViaMobileAPI(postCode, account, ua) {
+  // Cookie header
+  var cookie = 'sessionid=' + account.sessionid +
+    '; csrftoken=' + account.csrftoken +
+    '; ds_user_id=' + account.userid;
+
+  // Endpoint variants to try
+  var endpoints = [
+    {
+      label: 'web GraphQL by shortcode',
+      host: 'www.threads.net',
+      path: '/api/graphql',
+      method: 'POST',
+      body: 'lsd=AVqbxe3J_YA&fb_api_caller_class=RelayModern&fb_api_req_friendly_name=BarcelonaPostPageContentQuery' +
+        '&variables=' + encodeURIComponent(JSON.stringify({ postID: postCode, withShallowTree: false, includePromotedPosts: false })) +
+        '&doc_id=25460088170359441',
+      contentType: 'application/x-www-form-urlencoded',
+    },
+    {
+      label: 'i.instagram.com text_feed',
+      host: 'i.instagram.com',
+      path: '/api/v1/text_feed/' + postCode + '/info/',
+      method: 'GET',
+      body: null,
+      contentType: null,
+    },
+  ];
+
+  for (var ei = 0; ei < endpoints.length; ei++) {
+    var ep = endpoints[ei];
+    try {
+      console.log('[Threads API] Trying ' + ep.label + ' for ' + postCode);
+      var resp = await sendApiRequest(ep, cookie, account.csrftoken, ua);
+      console.log('[Threads API] ' + ep.label + ' status=' + resp.status + ' bodyLen=' + (resp.body || '').length);
+      if (resp.status === 401 || resp.status === 403) {
+        return { success: false, errorType: 'auth_failed', errorMessage: 'HTTP ' + resp.status + ' on ' + ep.label };
+      }
+      if (resp.status === 429) {
+        return { success: false, errorType: 'rate_limited', errorMessage: 'HTTP 429 on ' + ep.label };
+      }
+      if (resp.status >= 200 && resp.status < 300 && resp.body && resp.body.length > 100) {
+        var parsed = parseApiResponse(resp.body, postCode);
+        if (parsed) {
+          return { success: true, ...parsed };
+        }
+        console.log('[Threads API] Could not parse stats from ' + ep.label + ' response (body preview: ' + resp.body.substring(0, 300) + ')');
+      }
+    } catch (e) {
+      console.log('[Threads API] ' + ep.label + ' threw: ' + e.message);
+    }
+  }
+  return { success: false, errorType: 'unknown', errorMessage: 'All API endpoints failed' };
+}
+
+// Make a single HTTPS request via SOCKS5 proxy with auth headers.
+function sendApiRequest(endpoint, cookieHeader, csrfToken, ua) {
+  return new Promise(function(resolve, reject) {
+    if (!PROXY_HOST) return reject(new Error('No proxy configured'));
+    var timeout = setTimeout(function() { reject(new Error('API request timeout')); }, 30000);
+    var socket = new net.Socket();
+
+    socket.connect(PROXY_PORT, PROXY_HOST, function() {
+      var hasAuth = PROXY_USER && PROXY_PASS;
+      if (hasAuth) socket.write(Buffer.from([0x05, 0x02, 0x00, 0x02]));
+      else socket.write(Buffer.from([0x05, 0x01, 0x00]));
+    });
+
+    var step = 0;
+    socket.on('data', function(chunk) {
+      if (step === 0) {
+        if (chunk[0] !== 0x05) { clearTimeout(timeout); socket.destroy(); return reject(new Error('Not SOCKS5')); }
+        if (chunk[1] === 0x02) {
+          var userBuf = Buffer.from(PROXY_USER);
+          var passBuf = Buffer.from(PROXY_PASS);
+          var authBuf = Buffer.alloc(3 + userBuf.length + passBuf.length);
+          authBuf[0] = 0x01; authBuf[1] = userBuf.length;
+          userBuf.copy(authBuf, 2);
+          authBuf[2 + userBuf.length] = passBuf.length;
+          passBuf.copy(authBuf, 3 + userBuf.length);
+          socket.write(authBuf);
+          step = 1;
+        } else if (chunk[1] === 0x00) {
+          sendSocksConnect(socket, endpoint.host, 443);
+          step = 2;
+        } else {
+          clearTimeout(timeout); socket.destroy(); reject(new Error('Auth method rejected'));
+        }
+      } else if (step === 1) {
+        if (chunk[1] !== 0x00) { clearTimeout(timeout); socket.destroy(); return reject(new Error('Auth failed')); }
+        sendSocksConnect(socket, endpoint.host, 443);
+        step = 2;
+      } else if (step === 2) {
+        if (chunk[1] !== 0x00) { clearTimeout(timeout); socket.destroy(); return reject(new Error('Connect failed: ' + chunk[1])); }
+        var tls = require('tls');
+        var tlsSocket = tls.connect({ socket: socket, servername: endpoint.host }, function() {
+          var headers = endpoint.method + ' ' + endpoint.path + ' HTTP/1.1\r\n' +
+            'Host: ' + endpoint.host + '\r\n' +
+            'User-Agent: ' + ua + '\r\n' +
+            'Accept: */*\r\n' +
+            'Accept-Language: en-US,en;q=0.9\r\n' +
+            'Accept-Encoding: identity\r\n' +
+            'Cookie: ' + cookieHeader + '\r\n' +
+            'X-CSRFToken: ' + csrfToken + '\r\n' +
+            'X-IG-App-ID: 238260118697367\r\n' +
+            'X-ASBD-ID: 198387\r\n' +
+            'X-FB-LSD: AVqbxe3J_YA\r\n' +
+            'X-Requested-With: XMLHttpRequest\r\n' +
+            'Origin: https://www.threads.net\r\n' +
+            'Referer: https://www.threads.net/\r\n';
+          if (endpoint.method === 'POST' && endpoint.body) {
+            headers += 'Content-Type: ' + endpoint.contentType + '\r\n';
+            headers += 'Content-Length: ' + Buffer.byteLength(endpoint.body) + '\r\n';
+          }
+          headers += 'Connection: close\r\n\r\n';
+          if (endpoint.method === 'POST' && endpoint.body) headers += endpoint.body;
+          tlsSocket.write(headers);
+        });
+        var responseData = '';
+        tlsSocket.on('data', function(d) { responseData += d.toString(); });
+        tlsSocket.on('end', function() {
+          clearTimeout(timeout);
+          var bodyStart = responseData.indexOf('\r\n\r\n');
+          if (bodyStart === -1) return resolve({ status: 0, body: responseData });
+          var head = responseData.substring(0, bodyStart);
+          var body = responseData.slice(bodyStart + 4);
+          var statusM = head.match(/^HTTP\/[\d.]+\s+(\d+)/);
+          var status = statusM ? parseInt(statusM[1], 10) : 0;
+          if (/Transfer-Encoding:\s*chunked/i.test(head)) body = decodeChunked(body);
+          resolve({ status: status, body: body });
+        });
+        tlsSocket.on('error', function(e) { clearTimeout(timeout); reject(e); });
+        step = 3;
+      }
+    });
+    socket.on('error', function(e) { clearTimeout(timeout); reject(e); });
+    socket.on('timeout', function() { clearTimeout(timeout); socket.destroy(); reject(new Error('Socket timeout')); });
+    socket.setTimeout(25000);
+  });
+}
+
+// Parse the JSON response from any Meta API endpoint and extract counts.
+function parseApiResponse(body, postCode) {
+  try {
+    var data = JSON.parse(body);
+    // Search recursively for the post that matches our postCode
+    var post = findPostInResponse(data, postCode);
+    if (!post) {
+      console.log('[Threads API] Post not found in response. Top-level keys: ' + Object.keys(data).join(','));
+      return null;
+    }
+    var likeCount = post.like_count != null ? post.like_count : 0;
+    var viewCount = post.view_count != null ? post.view_count : (post.feedback_info && post.feedback_info.view_count) || 0;
+    var replyCount = (post.text_post_app_info && post.text_post_app_info.direct_reply_count) || post.direct_reply_count || post.reply_count || 0;
+    var repostCount = (post.text_post_app_info && post.text_post_app_info.repost_count) || post.repost_count || 0;
+    var quoteCount = (post.text_post_app_info && post.text_post_app_info.quote_count) || post.quote_count || 0;
+    var username = (post.user && post.user.username) || (post.owner && post.owner.username) || null;
+    var postedAt = post.taken_at ? new Date(Number(post.taken_at) * 1000).toISOString() : null;
+
+    return {
+      views: Math.round(viewCount * VIEW_MULTIPLIER),
+      likes: likeCount,
+      comments: replyCount,
+      shares: repostCount + quoteCount,
+      username: username ? String(username).toLowerCase() : null,
+      postedAt: postedAt,
+    };
+  } catch (e) {
+    console.log('[Threads API] JSON parse error: ' + e.message);
+    return null;
+  }
+}
+
+// Recursive search for the post object matching the given code.
+function findPostInResponse(obj, code, depth) {
+  depth = depth || 0;
+  if (depth > 12 || !obj || typeof obj !== 'object') return null;
+  // Check current node
+  if (obj.code === code || obj.pk === code || obj.id === code) {
+    if (obj.like_count != null || obj.text_post_app_info || obj.user) return obj;
+  }
+  // Recurse arrays
+  if (Array.isArray(obj)) {
+    for (var i = 0; i < obj.length; i++) {
+      var found = findPostInResponse(obj[i], code, depth + 1);
+      if (found) return found;
+    }
+    return null;
+  }
+  // Recurse object values
+  var keys = Object.keys(obj);
+  for (var k = 0; k < keys.length; k++) {
+    var found2 = findPostInResponse(obj[keys[k]], code, depth + 1);
+    if (found2) return found2;
+  }
+  return null;
+}
+
 function initBrowser() { return Promise.resolve(); }
 function closeBrowser() { return Promise.resolve(); }
+
+// Boot: load accounts pool from env
+require('./threadsAccounts').loadAccounts();
 
 module.exports = { scrapePost: scrapePost, initBrowser: initBrowser, closeBrowser: closeBrowser };
