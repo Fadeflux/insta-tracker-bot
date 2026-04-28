@@ -201,20 +201,54 @@ async function scrapePost(url) {
         return Math.round(num);
       }
       var stats = { views: 0, likes: 0, comments: 0 };
+
+      // Views: usually shown like "24.5 K vues" or "3,9 K vues" near the top
       var all = document.querySelectorAll('span, div, header');
       for (var i = 0; i < all.length; i++) {
         var t = (all[i].innerText || '').trim();
         if (!t) continue;
-        if (/\d.*vues?$/i.test(t) || /\d.*views?$/i.test(t)) {
+        if (/^[\d.,]+\s*[KMB]?\s*(vues?|views?|visualizaç)/i.test(t)) {
           var v = parseHumanCount(t);
           if (v > stats.views) stats.views = v;
         }
       }
-      var likeBtn = document.querySelector('[aria-label*="like" i], [aria-label*="J\'aime" i]');
-      if (likeBtn) {
-        var lblM = (likeBtn.getAttribute('aria-label') || '').match(/([\d.,]+\s*[KMB]?)/i);
-        if (lblM) stats.likes = parseHumanCount(lblM[1]);
+
+      // Likes/comments: Threads renders the action bar buttons with their counts as <span> next to SVG icons.
+      // Strategy: find ALL spans containing a number (with optional K/M suffix) and group them,
+      // taking the largest as likes and second-largest as comments. This works because likes is
+      // typically the first/biggest counter shown (heart icon).
+      var counters = [];
+      var spans = document.querySelectorAll('span, a, button');
+      for (var j = 0; j < spans.length; j++) {
+        var el = spans[j];
+        var txt = (el.innerText || el.textContent || '').trim();
+        if (!txt) continue;
+        // Match standalone numbers like "66", "1.2K", "24,5 K"
+        var m2 = txt.match(/^([\d]{1,3}(?:[.,\s][\d]{3})*|[\d]+([.,][\d]+)?)\s*([KMB]?)$/i);
+        if (m2) {
+          var n = parseHumanCount(txt);
+          if (n > 0 && n < 100000000) counters.push(n);
+        }
       }
+
+      // Heuristic: with 4 buttons (like, comment, repost, share), counters will roughly be
+      // [likes, comments, reposts, shares]. The biggest is usually likes.
+      if (counters.length >= 1) {
+        // Filter out the views number (already extracted)
+        counters = counters.filter(function(n) { return n !== stats.views; });
+        if (counters.length >= 1) stats.likes = counters[0];
+        if (counters.length >= 2) stats.comments = counters[1];
+      }
+
+      // Aria-label fallback (if Threads switches structure)
+      if (stats.likes === 0) {
+        var likeBtn = document.querySelector('[aria-label*="like" i], [aria-label*="J\'aime" i], [aria-label*="Curtir" i]');
+        if (likeBtn) {
+          var lbl = (likeBtn.getAttribute('aria-label') || '').match(/([\d.,]+\s*[KMB]?)/i);
+          if (lbl) stats.likes = parseHumanCount(lbl[1]);
+        }
+      }
+
       return stats;
     });
 
