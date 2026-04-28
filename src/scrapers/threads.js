@@ -186,78 +186,143 @@ async function scrapePost(url) {
       return result;
     }
 
-    // DOM fallback
-    var domStats = await page.evaluate(function() {
+    // DOM fallback — robust parser that targets only the MAIN post's action bar.
+    var domStats = await page.evaluate(function(targetCode) {
       function parseHumanCount(s) {
         if (!s) return 0;
-        s = String(s).trim().replace(/\s+/g, '');
-        var m = s.match(/^([\d.,]+)\s*([KMB]?)/i);
+        s = String(s).trim();
+        // Strip all whitespace including non-breaking
+        s = s.replace(/\s+/g, '').replace(/\u00a0/g, '');
+        var m = s.match(/^([\d.,]+)\s*([KMB]?)$/i);
         if (!m) return 0;
-        var num = parseFloat(m[1].replace(',', '.'));
+        var raw = m[1];
         var suf = (m[2] || '').toUpperCase();
+        // French-style: "24,5" or "1,234" — comma can be decimal or thousand sep.
+        // If there's exactly one comma and 1-3 digits after, treat as decimal.
+        var num;
+        if (/^[\d]{1,3},[\d]{1,3}$/.test(raw) && suf) {
+          num = parseFloat(raw.replace(',', '.'));
+        } else {
+          // Otherwise comma/period are thousand separators
+          num = parseFloat(raw.replace(/[.,]/g, ''));
+          if (isNaN(num)) num = parseFloat(raw.replace(',', '.'));
+        }
+        if (isNaN(num)) return 0;
         if (suf === 'K') num *= 1000;
         if (suf === 'M') num *= 1000000;
         if (suf === 'B') num *= 1000000000;
         return Math.round(num);
       }
-      var stats = { views: 0, likes: 0, comments: 0 };
 
-      // Views: usually shown like "24.5 K vues" or "3,9 K vues" near the top
-      var all = document.querySelectorAll('span, div, header');
-      for (var i = 0; i < all.length; i++) {
-        var t = (all[i].innerText || '').trim();
-        if (!t) continue;
-        if (/^[\d.,]+\s*[KMB]?\s*(vues?|views?|visualizaç)/i.test(t)) {
-          var v = parseHumanCount(t);
+      var stats = { views: 0, likes: 0, comments: 0, shares: 0 };
+
+      // ==================================================================
+      // 1) VIEWS: only from the page header "Thread N vues" (top of page)
+      // The first post page on threads.com has a header with the view count.
+      // We restrict the search to elements appearing visually high on the page.
+      // ==================================================================
+      var headerCandidates = document.querySelectorAll('h1, h2, header, [role="heading"]');
+      for (var h = 0; h < headerCandidates.length; h++) {
+        var el = headerCandidates[h];
+        var rect = el.getBoundingClientRect();
+        if (rect.top > 200) continue; // must be near top
+        var txt = (el.innerText || '').trim();
+        // Look for a number followed by "vues" or "views" inside this header
+        var m = txt.match(/([\d][\d.,\s]*[KMB]?)\s*(vues?|views?|visualizaç)/i);
+        if (m) {
+          var v = parseHumanCount(m[1]);
           if (v > stats.views) stats.views = v;
         }
       }
-
-      // Likes/comments: Threads renders the action bar buttons with their counts as <span> next to SVG icons.
-      // Strategy: find ALL spans containing a number (with optional K/M suffix) and group them,
-      // taking the largest as likes and second-largest as comments. This works because likes is
-      // typically the first/biggest counter shown (heart icon).
-      var counters = [];
-      var spans = document.querySelectorAll('span, a, button');
-      for (var j = 0; j < spans.length; j++) {
-        var el = spans[j];
-        var txt = (el.innerText || el.textContent || '').trim();
-        if (!txt) continue;
-        // Match standalone numbers like "66", "1.2K", "24,5 K"
-        var m2 = txt.match(/^([\d]{1,3}(?:[.,\s][\d]{3})*|[\d]+([.,][\d]+)?)\s*([KMB]?)$/i);
-        if (m2) {
-          var n = parseHumanCount(txt);
-          if (n > 0 && n < 100000000) counters.push(n);
+      // Backup: look in any element near top with "vues" text
+      if (stats.views === 0) {
+        var topElements = document.querySelectorAll('span, div');
+        for (var i = 0; i < topElements.length && i < 200; i++) {
+          var rect2 = topElements[i].getBoundingClientRect();
+          if (rect2.top > 250) continue;
+          var t2 = (topElements[i].innerText || '').trim();
+          if (!t2 || t2.length > 30) continue;
+          var m2 = t2.match(/^([\d][\d.,\s]*[KMB]?)\s*(vues?|views?)$/i);
+          if (m2) {
+            var v2 = parseHumanCount(m2[1]);
+            if (v2 > stats.views) stats.views = v2;
+          }
         }
       }
 
-      // Heuristic: with 4 buttons (like, comment, repost, share), counters will roughly be
-      // [likes, comments, reposts, shares]. The biggest is usually likes.
-      if (counters.length >= 1) {
-        // Filter out the views number (already extracted)
-        counters = counters.filter(function(n) { return n !== stats.views; });
-        if (counters.length >= 1) stats.likes = counters[0];
-        if (counters.length >= 2) stats.comments = counters[1];
-      }
+      // ==================================================================
+      // 2) ACTION BAR: find the FIRST post on the page (the main one)
+      // The action bar is a row of buttons with SVG icons and counts next to them.
+      // We identify the main post by looking for an article element or the first
+      // post-like container on the page.
+      // ==================================================================
 
-      // Aria-label fallback (if Threads switches structure)
-      if (stats.likes === 0) {
-        var likeBtn = document.querySelector('[aria-label*="like" i], [aria-label*="J\'aime" i], [aria-label*="Curtir" i]');
-        if (likeBtn) {
-          var lbl = (likeBtn.getAttribute('aria-label') || '').match(/([\d.,]+\s*[KMB]?)/i);
-          if (lbl) stats.likes = parseHumanCount(lbl[1]);
+      // Find the first article/post container
+      var mainPost = document.querySelector('article') ||
+                     document.querySelector('[data-pressable-container]') ||
+                     document.querySelector('main > div > div');
+
+      if (mainPost) {
+        // Inside the main post, find ALL svg/icon buttons and their associated count text
+        // Action bar buttons typically have role=link, role=button, or are <a>/<button>
+        var buttons = mainPost.querySelectorAll('a, button, [role="button"], [role="link"]');
+        var counters = [];
+
+        for (var b = 0; b < buttons.length; b++) {
+          var btn = buttons[b];
+          // Check if button contains an SVG (icon)
+          if (!btn.querySelector('svg')) continue;
+          // Read the visible text inside the button
+          var text = (btn.innerText || btn.textContent || '').trim();
+          if (!text) continue;
+          // Only short numeric text (avoid description text)
+          if (text.length > 15) continue;
+
+          // Try to parse as a number
+          var nm = text.match(/^([\d][\d.,\s]*[KMB]?)$/i);
+          if (nm) {
+            var n = parseHumanCount(nm[1]);
+            if (n >= 0 && n < 100000000) {
+              // Determine button type from aria-label or surrounding SVG path
+              var aria = (btn.getAttribute('aria-label') || '').toLowerCase();
+              var type = 'unknown';
+              if (/like|j.aime|curtir|me gusta/i.test(aria)) type = 'like';
+              else if (/repl|comment|commentaire|comentário/i.test(aria)) type = 'comment';
+              else if (/repost|reposter|compartilhar/i.test(aria)) type = 'repost';
+              else if (/share|envoy|enviar|partager/i.test(aria)) type = 'share';
+              counters.push({ value: n, type: type, order: counters.length });
+            }
+          }
+        }
+
+        // Assign by aria-label first
+        for (var c = 0; c < counters.length; c++) {
+          if (counters[c].type === 'like' && stats.likes === 0) stats.likes = counters[c].value;
+          if (counters[c].type === 'comment' && stats.comments === 0) stats.comments = counters[c].value;
+          if (counters[c].type === 'repost' && stats.shares === 0) stats.shares = counters[c].value;
+        }
+
+        // Fallback: assign by position (order on page) if aria-label didn't give us all
+        // Threads action bar order is: like, comment, repost, share
+        if (stats.likes === 0 || stats.comments === 0) {
+          var unknownCounters = counters.filter(function(c) { return c.type === 'unknown'; });
+          // Take only the first 4 (the action bar buttons)
+          if (unknownCounters.length >= 1 && stats.likes === 0) stats.likes = unknownCounters[0].value;
+          if (unknownCounters.length >= 2 && stats.comments === 0) stats.comments = unknownCounters[1].value;
+          if (unknownCounters.length >= 3 && stats.shares === 0) stats.shares = unknownCounters[2].value;
         }
       }
 
       return stats;
-    });
+    }, postCode);
 
     if (domStats && (domStats.views > 0 || domStats.likes > 0)) {
       threadsAccounts.markAccountSuccess(account);
       result.views = domStats.views;
       result.likes = domStats.likes;
       result.comments = domStats.comments;
-      console.log('[Threads/Puppeteer] DOM-fallback ' + postCode + ' — views=' + result.views + ' likes=' + result.likes + ' (account #' + account.index + ')');
+      result.shares = domStats.shares || 0;
+      console.log('[Threads/Puppeteer] DOM-fallback ' + postCode + ' — views=' + result.views + ' likes=' + result.likes + ' comments=' + result.comments + ' shares=' + result.shares + ' (account #' + account.index + ')');
       return result;
     }
 
