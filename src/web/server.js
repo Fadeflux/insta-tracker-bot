@@ -1060,6 +1060,22 @@ function createWebServer() {
     } catch(err) { res.status(500).json({ error: err.message }); }
   });
 
+  // === Threads accounts pool monitoring (admin) ===
+  // Returns the status of each Threads scraper account (active / banned / rate_limited)
+  // along with success/error counters. Useful to know when to rotate accounts.
+  app.get('/api/admin/threads-accounts', checkAuth, checkAdmin, function(req, res) {
+    try {
+      var threadsAccounts = require('../scrapers/threadsAccounts');
+      var status = threadsAccounts.getAccountsStatus();
+      var activeCount = threadsAccounts.getActiveCount();
+      res.json({
+        accounts: status,
+        activeCount: activeCount,
+        totalCount: status.length,
+      });
+    } catch(err) { res.status(500).json({ error: err.message }); }
+  });
+
   // Force the daily summary for a platform (useful for testing or re-sending).
   app.post('/api/admin/force-summary', checkAuth, checkAdmin, async function(req, res) {
     try {
