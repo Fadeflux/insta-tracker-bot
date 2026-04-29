@@ -278,6 +278,8 @@ body.theme-light #themeBtn{background:#fff;border:1px solid var(--border)}
     <button class="notif-tab" data-kind="viral_confirmed" onclick="setNotifTab('viral_confirmed')" style="background:transparent;color:var(--text2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap">🔥 Viral <span class="notif-tab-count" data-kind="viral_confirmed"></span></button>
     <button class="notif-tab" data-kind="fast_growth" onclick="setNotifTab('fast_growth')" style="background:transparent;color:var(--text2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap">🚀 Croissance <span class="notif-tab-count" data-kind="fast_growth"></span></button>
     <button class="notif-tab" data-kind="shadowban_suspected" onclick="setNotifTab('shadowban_suspected')" style="background:transparent;color:var(--text2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap">🚫 Shadowban <span class="notif-tab-count" data-kind="shadowban_suspected"></span></button>
+    <button class="notif-tab" data-kind="account_disabled" onclick="setNotifTab('account_disabled')" style="background:transparent;color:var(--text2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap">⛔ Compte <span class="notif-tab-count" data-kind="account_disabled"></span></button>
+    <button class="notif-tab" data-kind="va_inactive" onclick="setNotifTab('va_inactive')" style="background:transparent;color:var(--text2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap">😴 Inactif <span class="notif-tab-count" data-kind="va_inactive"></span></button>
   </div>
   <div id="notifList" style="overflow-y:auto;max-height:55vh"></div>
 </div>
@@ -379,7 +381,14 @@ function loadNotifList(){
 
 // Update the small (X) counters on each tab so user sees how many notifs in each category.
 function updateNotifTabCounts(){
-  var counts={all:NOTIF_LIST_CACHE.length,viral_confirmed:0,fast_growth:0,shadowban_suspected:0};
+  var counts={
+    all:NOTIF_LIST_CACHE.length,
+    viral_confirmed:0,
+    fast_growth:0,
+    shadowban_suspected:0,
+    account_disabled:0,
+    va_inactive:0
+  };
   NOTIF_LIST_CACHE.forEach(function(n){
     if(counts[n.kind]!==undefined)counts[n.kind]++;
   });
@@ -426,8 +435,20 @@ function renderNotifList(){
   filtered.forEach(function(n){
     var dt=new Date(n.created_at);
     var when=relativeTime(dt);
-    var icon=n.kind==='viral_confirmed'?'🔥':n.kind==='fast_growth'?'🚀':n.kind==='shadowban_suspected'?'🚫':'🔔';
-    var color=n.kind==='viral_confirmed'?'var(--viral)':n.kind==='fast_growth'?'var(--orange)':n.kind==='shadowban_suspected'?'var(--red)':'var(--accent)';
+    var icon=
+      n.kind==='viral_confirmed'?'🔥':
+      n.kind==='fast_growth'?'🚀':
+      n.kind==='shadowban_suspected'?'🚫':
+      n.kind==='account_disabled'?'⛔':
+      n.kind==='va_inactive'?'😴':
+      '🔔';
+    var color=
+      n.kind==='viral_confirmed'?'var(--viral)':
+      n.kind==='fast_growth'?'var(--orange)':
+      n.kind==='shadowban_suspected'?'var(--red)':
+      n.kind==='account_disabled'?'var(--red)':
+      n.kind==='va_inactive'?'var(--blue)':
+      'var(--accent)';
     var link=n.url?('<a href="'+n.url+'" target="_blank" style="color:var(--accent);font-size:10px;text-decoration:none">Voir →</a>'):'';
     h+='<div style="padding:12px 18px;border-bottom:1px solid var(--border);display:flex;gap:10px;align-items:flex-start">';
     h+='<div style="font-size:18px;color:'+color+'">'+icon+'</div>';
