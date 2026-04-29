@@ -153,6 +153,11 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(-
 .tbl th:first-child{border-radius:8px 0 0 8px}.tbl th:last-child{border-radius:0 8px 8px 0}
 .tbl td{padding:12px 14px;font-size:12px;border-bottom:1px solid var(--border)}
 .tbl tr{transition:all 0.15s;cursor:pointer}.tbl tr:hover{background:rgba(124,58,237,0.05)}
+/* Cleaner SaaS-style table — used on the Dashboard "Performance par VA" section */
+.tbl-clean th{padding:14px 16px;font-size:10px;background:transparent;border-bottom:1px solid var(--border)}
+.tbl-clean td{padding:14px 16px;font-size:12px;border-bottom:1px solid var(--border)}
+.tbl-clean tr:last-child td{border-bottom:none}
+.tbl-clean tr:hover{background:rgba(124,58,237,0.04)}
 .ok{color:var(--green);font-weight:700}.warn{color:var(--orange);font-weight:700}.bad{color:var(--red);font-weight:700}
 
 /* Charts */
@@ -777,21 +782,63 @@ var h='<div class="sec-title">'+platEmoji()+' '+platLabel()+' — '+date+'</div>
 h+='<div class="kpis">';
 h+=kpi('👥',''+s.length,'VA actifs','','purple');
 h+=kpi('📝',''+tp,'Posts','obj: '+s.length*6,'blue');
-h+=kpi('👁️',fm(tv),'Vues','','purple');
-h+=kpi('❤️',fm(tl),'Likes','','pink');
-h+=kpi('💬',fm(tc),commLabel,'','blue');
-h+=kpi(PLAT==='twitter'?'🔁':'🔄',fm(ts),rtLabel,'','purple');
-h+=kpi('🏆',fm(tsc),'Score','L+C×3+S×5','orange');
+h+=kpi('👁️',fm(tv),'Vues totales','','purple');
 h+=kpi('📊',avgEng+'%','Engagement','','green');
-h+=kpi('🎯',pct6+'%','Objectif 6p',obj6+'/'+s.length,'green');
+h+=kpi('🏆',fm(tsc),'Score','','orange');
+h+=kpi('🎯',pct6+'%','Objectif 6p',obj6+'/'+s.length+' VA','green');
 h+='</div>';
 
 h+='<div class="card" style="margin-bottom:16px"><h3><span class="dot"></span>Vues par VA</h3><div class="chart-wrap"><canvas id="vaBarChart"></canvas></div></div>';
 
 if(s.length>0){var best=s[0];h+='<div class="card" style="border-left:2px solid var(--green)"><div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:16px"><div><div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Meilleur VA</div><div style="font-size:20px;font-weight:800">'+best.va_name+' '+vaBadge(best.badge)+'</div><div style="color:var(--text3);font-size:12px;margin-top:4px">'+best.post_count+' posts · Score '+fm(best.total_score)+' · Eng. '+best.engagement_rate+'%</div></div><div style="display:flex;gap:20px"><div style="text-align:center"><div style="font-size:24px;font-weight:800;color:var(--purple)">'+fm(Number(best.total_views))+'</div><div style="font-size:9px;color:var(--text3);text-transform:uppercase">vues</div></div><div style="text-align:center"><div style="font-size:24px;font-weight:800;color:var(--accent)">'+fm(Number(best.total_likes))+'</div><div style="font-size:9px;color:var(--text3);text-transform:uppercase">likes</div></div></div></div></div>'}
 
-h+='<div class="card"><h3><span class="dot"></span>Tableau detaille</h3><table class="tbl"><thead><tr><th>#</th><th>VA</th><th>Badge</th><th>Posts</th><th>Vues</th><th>Likes</th><th>'+commLabel+'</th><th>'+rtLabel+'</th><th>Score</th><th>Eng.</th><th>Moy/p</th></tr></thead><tbody>';
-s.forEach(function(x,i){var m=i<3?['🥇','🥈','🥉'][i]:''+(i+1);var pc=Number(x.post_count);var cls=pc>=6?'ok':pc>=3?'warn':'bad';var avg=pc>0?fm(Math.round(Number(x.total_views)/pc)):'0';h+='<tr onclick="openVA(\''+x.va_discord_id+'\',\''+x.va_name+'\')"><td>'+m+'</td><td><b>'+x.va_name+'</b></td><td>'+vaBadge(x.badge)+'</td><td class="'+cls+'">'+pc+'/6</td><td>'+fm(Number(x.total_views))+'</td><td>'+fm(Number(x.total_likes))+'</td><td>'+fm(Number(x.total_comments))+'</td><td>'+fm(Number(x.total_shares||0))+'</td><td style="color:var(--orange);font-weight:700">'+fm(x.total_score)+'</td><td>'+x.engagement_rate+'%</td><td>'+avg+'</td></tr>'});
+h+='<div class="card"><h3><span class="dot"></span>Performance par VA</h3>';
+h+='<table class="tbl tbl-clean"><thead><tr>';
+h+='<th style="width:60px">Rang</th>';
+h+='<th>VA</th>';
+h+='<th style="width:150px">Posts</th>';
+h+='<th style="text-align:right">Vues</th>';
+h+='<th style="text-align:right;width:110px">Engagement</th>';
+h+='<th style="text-align:right;width:90px">Score</th>';
+h+='</tr></thead><tbody>';
+s.forEach(function(x,i){
+  var pc=Number(x.post_count);
+  var avg=pc>0?Math.round(Number(x.total_views)/pc):0;
+  var isTop=i<3;
+  var medals=['🥇','🥈','🥉'];
+  var rankCell=isTop?'<span style="font-size:18px">'+medals[i]+'</span>':'<span style="color:var(--text3);font-weight:700">'+(i+1)+'</span>';
+  // Posts progress bar (out of 6)
+  var pctPosts=Math.min(100,Math.round(pc/6*100));
+  var barColor=pc>=6?'var(--green)':pc>=3?'var(--orange)':'var(--red)';
+  var postsCell=
+    '<div style="display:flex;align-items:center;gap:8px">'+
+      '<span style="font-weight:600;min-width:30px">'+pc+'/6</span>'+
+      '<div style="flex:1;height:6px;background:var(--bg3);border-radius:3px;overflow:hidden">'+
+        '<div style="width:'+pctPosts+'%;height:100%;background:'+barColor+';transition:width 0.3s"></div>'+
+      '</div>'+
+    '</div>';
+  // Engagement badge color based on rate
+  var engRate=parseFloat(x.engagement_rate);
+  var engBg=engRate>=2?'rgba(16,185,129,0.15)':engRate>=1?'rgba(245,158,11,0.15)':'rgba(239,68,68,0.15)';
+  var engColor=engRate>=2?'var(--green)':engRate>=1?'var(--orange)':'var(--red)';
+  // Score: bigger and bolder for top 3
+  var scoreSize=isTop?'15px':'13px';
+  var scoreWeight=isTop?'800':'600';
+  // Row background subtly highlighted for top 3
+  var rowBg=isTop?'background:linear-gradient(90deg,rgba(124,58,237,0.04),transparent)':'';
+  // VA name styling: bold for top 3, normal for the rest
+  var vaWeight=isTop?'700':'500';
+  var vaColor=isTop?'var(--text)':'var(--text2)';
+  var avgInfo=avg>0?'<div style="font-size:10px;color:var(--text3);margin-top:2px">Moy: '+fm(avg)+' vues/post</div>':'';
+  h+='<tr onclick="openVA(\''+x.va_discord_id+'\',\''+x.va_name+'\')" style="'+rowBg+'cursor:pointer">';
+  h+='<td>'+rankCell+'</td>';
+  h+='<td><div style="font-weight:'+vaWeight+';color:'+vaColor+'">'+escapeHtml(x.va_name)+'</div>'+avgInfo+'</td>';
+  h+='<td>'+postsCell+'</td>';
+  h+='<td style="text-align:right;font-weight:600;font-variant-numeric:tabular-nums">'+fm(Number(x.total_views))+'</td>';
+  h+='<td style="text-align:right"><span style="display:inline-block;padding:3px 10px;border-radius:12px;font-size:11px;font-weight:700;background:'+engBg+';color:'+engColor+'">'+x.engagement_rate+'%</span></td>';
+  h+='<td style="text-align:right;font-size:'+scoreSize+';font-weight:'+scoreWeight+';color:var(--orange);font-variant-numeric:tabular-nums">'+fm(x.total_score)+'</td>';
+  h+='</tr>';
+});
 h+='</tbody></table></div>';
 // Empty placeholder for streaks — filled async below WITHOUT touching the canvas
 h+='<div id="streaksArea"></div>';
