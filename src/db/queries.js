@@ -147,6 +147,8 @@ async function insertSnapshot(postId, stats) {
 
   // If scraper extracted the real publication time AND we don't have it yet,
   // store it AND compute the delay (in minutes) between created_at (link sent) and posted_at (real publish).
+  // Note: a separate cron-based system already DMs the VA when the link arrives
+  // late — we don't duplicate that as an in-app notification.
   if (stats.postedAt) {
     try {
       await pool.query(
@@ -1420,10 +1422,24 @@ async function pruneOldNotifications() {
 }
 
 // === SHADOWBAN DETECTION ===
-// Checks the 3 most recent posts of a given account (must be at least 24h old
-// so they had time to accumulate views). If ALL 3 have < 300 views, the account
-// is considered probably shadowbanned. Returns an object describing the state,
-// or null if not enough data / not shadowbanned.
+// Documentation: see detectShadowbannedAccount below.
+
+// Find VAs who haven't posted in the last N hours on a given platform.
+// Returns rows with discord_id, va_name, last_post_at.
+async function findInactiveVAs(platform, hoursThreshold) {
+  hoursThreshold = hoursThreshold || 72;
+  var sql =
+    "SELECT p.va_discord_id, MAX(p.va_name) AS va_name, MAX(p.created_at) AS last_post_at " +
+    "FROM posts p " +
+    "WHERE p.platform = $1 AND p.va_discord_id IS NOT NULL AND p.deleted_at IS NULL " +
+    "GROUP BY p.va_discord_id " +
+    "HAVING MAX(p.created_at) < NOW() - ($2 || ' hours')::interval " +
+    "  AND MAX(p.created_at) > NOW() - INTERVAL '14 days'"; // ignore VAs gone for >2 weeks (probably left)
+  var r = await pool.query(sql, [platform, hoursThreshold]);
+  return r.rows;
+}
+
+
 //
 // Returns:
 //   null  → not shadowbanned (one of the last 3 posts has ≥300 views, or fewer
@@ -1498,7 +1514,7 @@ module.exports = {
   softDeletePost, restorePost, getPostBasics,
   // Notifications
   insertNotification, getNotifications, getUnreadCount, markNotificationsRead, pruneOldNotifications,
-  detectShadowbannedAccount,
+  detectShadowbannedAccount, findInactiveVAs,
   // Streaks
   updateStreak, getAllStreaks,
   // Alerts
