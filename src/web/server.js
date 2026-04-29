@@ -1233,9 +1233,16 @@ function createWebServer() {
     try {
       var platform = req.query.platform || 'instagram';
       var pool = db.pool;
-      // Get today's date in the team's TZ
-      var todayResult = await pool.query("SELECT (NOW() AT TIME ZONE 'Africa/Porto-Novo')::date AS today, NOW() AT TIME ZONE 'Africa/Porto-Novo' AS now_benin");
-      var today = todayResult.rows[0].today.toISOString().split('T')[0];
+      // Get today's date in the team's TZ.
+      // We TEXT-cast the date so PostgreSQL hands us a string ('2026-04-29') —
+      // not a JS Date that gets converted through UTC and loses a day.
+      var todayResult = await pool.query("SELECT TO_CHAR(NOW() AT TIME ZONE 'Africa/Porto-Novo', 'YYYY-MM-DD') AS today, NOW() AT TIME ZONE 'Africa/Porto-Novo' AS now_benin");
+      var today = todayResult.rows[0].today;
+      // Get today's date in the team's TZ.
+      // We TEXT-cast the date so PostgreSQL hands us a string ('2026-04-29') —
+      // not a JS Date that gets converted through UTC and loses a day.
+      var todayResult = await pool.query("SELECT TO_CHAR(NOW() AT TIME ZONE 'Africa/Porto-Novo', 'YYYY-MM-DD') AS today, NOW() AT TIME ZONE 'Africa/Porto-Novo' AS now_benin");
+      var today = todayResult.rows[0].today;
 
       // 1. Count today's posts (in Benin TZ)
       var postsToday = await pool.query(
@@ -1293,6 +1300,60 @@ function createWebServer() {
         sample_posts: samplePosts.rows,
       });
     } catch(err) { res.status(500).json({ error: err.message, stack: err.stack }); }
+  });
+
+  // === FORCE SCRAPE: re-queue every post created today for an immediate scrape ===
+  // Useful after a redeploy when Bull/Redis lost the in-flight delayed jobs and
+  // the dashboard shows zero views because no fresh snapshot has been taken yet.
+  // We re-add each post to the queue with delay=0 so the worker picks them up
+  // within a few seconds. The jobId uses the current minute slot to dedup with
+  // any already-queued job for the same post.
+  app.post('/api/admin/force-scrape-today', checkAuth, checkAdmin, async function(req, res) {
+    try {
+      var pool = db.pool;
+      var todayResult = await pool.query("SELECT TO_CHAR(NOW() AT TIME ZONE 'Africa/Porto-Novo', 'YYYY-MM-DD') AS today");
+      var today = todayResult.rows[0].today;
+
+      // Pick all today's posts that are still being tracked (deleted_at NULL,
+      // tracking_end in the future). We don't filter by platform here — if the
+      // caller wants a specific one, they can pass ?platform=...
+      var platformFilter = req.query.platform;
+      var sql = "SELECT id, url, platform FROM posts WHERE deleted_at IS NULL " +
+                "AND (created_at AT TIME ZONE 'Africa/Porto-Novo')::date = $1 " +
+                "AND tracking_end > NOW()";
+      var params = [today];
+      if (platformFilter) { sql += " AND platform = $2"; params.push(platformFilter); }
+      sql += " ORDER BY created_at DESC";
+      var posts = await pool.query(sql, params);
+
+      // Use the live scrapeQueue to add jobs. We staggers them slightly (200ms
+      // between jobs) so we don't slam the proxy with N concurrent requests.
+      var scrapeQueueModule = require('../jobs/scrapeQueue');
+      var queue = scrapeQueueModule.scrapeQueue;
+      var queued = 0, skipped = 0;
+      for (var i = 0; i < posts.rows.length; i++) {
+        var p = posts.rows[i];
+        var slot = Math.floor(Date.now() / 60000);
+        var jobId = 'scrape-' + p.id + '-force-' + slot;
+        try {
+          await queue.add(
+            'scrape-post',
+            { postId: p.id, url: p.url, platform: p.platform },
+            { delay: i * 200, jobId: jobId } // 200ms apart, so 100 posts = 20s spread
+          );
+          queued++;
+        } catch (e) {
+          // Job already queued for this post in this minute → skip
+          skipped++;
+        }
+      }
+
+      console.log('[Admin] Force-scrape-today: queued ' + queued + ' posts (' + skipped + ' skipped)');
+      res.json({ success: true, queued: queued, skipped: skipped, total: posts.rows.length, today: today });
+    } catch(err) {
+      console.error('[Admin] force-scrape-today failed:', err.message);
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // === In-app notifications (bell icon) ===
