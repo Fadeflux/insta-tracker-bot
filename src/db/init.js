@@ -348,6 +348,34 @@ DO $$ BEGIN
   WHERE created_at >= NOW() - INTERVAL '72 hours'
     AND deleted_at IS NULL
     AND tracking_end < created_at + INTERVAL '72 hours';
+
+  -- In-app notifications. Stored per platform so the dashboard can filter on
+  -- whatever the user is currently viewing. We don't need them to be very
+  -- long-lived: a TTL of ~14 days is enough; older ones can be pruned.
+  CREATE TABLE IF NOT EXISTS notifications (
+    id          SERIAL PRIMARY KEY,
+    platform    VARCHAR(16) NOT NULL,
+    kind        VARCHAR(32) NOT NULL,        -- 'viral_confirmed' | 'fast_growth'
+    post_id     INTEGER REFERENCES posts(id) ON DELETE CASCADE,
+    va_name     VARCHAR(128),
+    title       VARCHAR(255),
+    body        TEXT,
+    url         TEXT,
+    metadata    JSONB,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
+  CREATE INDEX IF NOT EXISTS idx_notif_platform_time ON notifications(platform, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_notif_post ON notifications(post_id);
+
+  -- Per-user read state. We don't want to spam every user with the same notif
+  -- counter, so each dashboard user has their own "last read" timestamp per
+  -- platform. Notifs newer than this timestamp count as unread.
+  CREATE TABLE IF NOT EXISTS notification_reads (
+    username    VARCHAR(128) NOT NULL,
+    platform    VARCHAR(16) NOT NULL,
+    last_read_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (username, platform)
+  );
 END $$;
 CREATE INDEX IF NOT EXISTS idx_dashboard_users_status ON dashboard_users(status);
 
