@@ -266,12 +266,21 @@ body.theme-light #themeBtn{background:#fff;border:1px solid var(--border)}
 </div>
 </div>
 <div class="app" id="app">
+<!-- Notifications panel — slides down from the bell button. Hidden by default. -->
+<div id="notifPanel" style="display:none;position:fixed;top:60px;right:20px;width:380px;max-height:70vh;background:var(--bg2);border:1px solid var(--border);border-radius:16px;box-shadow:0 16px 60px rgba(0,0,0,0.5);z-index:1000;overflow:hidden;display:none">
+  <div style="padding:14px 18px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
+    <div style="font-weight:700;font-size:14px">🔔 Notifications</div>
+    <button onclick="markAllNotifsRead()" style="background:transparent;border:none;color:var(--text3);cursor:pointer;font-size:11px">Tout marquer lu</button>
+  </div>
+  <div id="notifList" style="overflow-y:auto;max-height:60vh"></div>
+</div>
 <div class="topbar">
 <div class="brand" id="brandTitle">Shinra Tracker</div>
 <div class="right">
 <div class="plat-switch" id="platSwitch"></div>
 <span class="user" id="curUser"></span>
 <button id="adminBtn" style="display:none;padding:6px 14px;background:var(--bg3);color:var(--text2);border:1px solid var(--border);border-radius:20px;cursor:pointer;font-size:12px;transition:all 0.2s" onclick="openAdmin()">⚙️</button>
+<button id="notifBtn" title="Notifications" style="position:relative;padding:6px 12px;background:var(--bg3);color:var(--text2);border:1px solid var(--border);border-radius:20px;cursor:pointer;font-size:14px;transition:all 0.2s" onclick="toggleNotifPanel()">🔔<span id="notifBadge" style="display:none;position:absolute;top:-4px;right:-4px;min-width:18px;height:18px;padding:0 5px;background:var(--red);color:#fff;border-radius:9px;font-size:10px;font-weight:800;line-height:18px;text-align:center"></span></button>
 <button id="themeBtn" title="Basculer mode clair/sombre" style="padding:6px 12px;background:var(--bg3);color:var(--text2);border:1px solid var(--border);border-radius:20px;cursor:pointer;font-size:14px;transition:all 0.2s" onclick="toggleTheme()">🌙</button>
 <button class="logout" onclick="doLogout()">Deconnexion</button>
 </div>
@@ -300,7 +309,7 @@ if(T)showApp();
 function doLogin(){var u=document.getElementById('username').value,p=document.getElementById('password').value;fetch(A+'/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})}).then(function(r){return r.json()}).then(function(d){if(d.token){T=d.token;localStorage.setItem('dt',T);localStorage.setItem('du',d.username);localStorage.setItem('dr',d.role||'va');localStorage.setItem('dap',JSON.stringify(d.allowedPlatforms||['instagram']));ALLOWED_PLATS=d.allowedPlatforms||['instagram'];USER_ROLE=d.role||'va';PLAT=ALLOWED_PLATS[0]||'instagram';localStorage.setItem('dp',PLAT);showApp()}else{document.getElementById('loginErr').style.display='block'}}).catch(function(){document.getElementById('loginErr').style.display='block'})}
 function doLogout(){localStorage.clear();location.reload()}
 
-function switchPlatform(p){PLAT=p;localStorage.setItem('dp',p);updatePlatUI();var cur=document.querySelector('.nav-item.on');if(cur){var tab=cur.getAttribute('data-tab')||'dash';go(tab,cur)}}
+function switchPlatform(p){PLAT=p;localStorage.setItem('dp',p);updatePlatUI();var cur=document.querySelector('.nav-item.on');if(cur){var tab=cur.getAttribute('data-tab')||'dash';go(tab,cur)}if(typeof refreshNotifBadge==='function')refreshNotifBadge()}
 
 function updatePlatUI(){
 var sw=document.getElementById('platSwitch');sw.innerHTML='';
@@ -313,7 +322,7 @@ document.documentElement.style.setProperty('--accent',accentCol);
 var titles={instagram:'Shinra — Instagram',twitter:'Shinra — Twitter',geelark:'Shinra — Geelark Insta',threads:'Shinra — Threads',all:'Shinra — Global'};
 document.getElementById('brandTitle').textContent=titles[PLAT]||'Shinra Tracker'}
 
-function showApp(){document.getElementById('loginPage').style.display='none';document.getElementById('app').style.display='block';document.getElementById('curUser').textContent=localStorage.getItem('du')||'';ALLOWED_PLATS=JSON.parse(localStorage.getItem('dap')||'["instagram"]');USER_ROLE=localStorage.getItem('dr')||'va';if(ALLOWED_PLATS.indexOf(PLAT)===-1)PLAT=ALLOWED_PLATS[0]||'instagram';updatePlatUI();if(USER_ROLE==='admin'||USER_ROLE==='manager')document.getElementById('adminBtn').style.display='';go('dash',document.querySelector('.nav-item'))}
+function showApp(){document.getElementById('loginPage').style.display='none';document.getElementById('app').style.display='block';document.getElementById('curUser').textContent=localStorage.getItem('du')||'';ALLOWED_PLATS=JSON.parse(localStorage.getItem('dap')||'["instagram"]');USER_ROLE=localStorage.getItem('dr')||'va';if(ALLOWED_PLATS.indexOf(PLAT)===-1)PLAT=ALLOWED_PLATS[0]||'instagram';updatePlatUI();if(USER_ROLE==='admin'||USER_ROLE==='manager')document.getElementById('adminBtn').style.display='';go('dash',document.querySelector('.nav-item'));startNotifPolling()}
 
 function af(u){var sep=u.indexOf('?')!==-1?'&':'?';var platParam=PLAT==='all'?'':sep+'platform='+PLAT;var url=A+u+(PLAT==='all'?'':platParam);return fetch(url,{headers:{'X-Auth-Token':T}}).then(function(r){if(r.status===401){doLogout();throw new Error('x')}return r.json()})}
 
@@ -323,7 +332,109 @@ if(t==='dash')loadDash();else if(t==='lb')loadLB();else if(t==='reco')loadReco()
 // Helpers
 function fm(n){return n==null?'0':Number(n).toLocaleString('fr-FR')}
 
-// === THEME (dark / light) ===
+// === IN-APP NOTIFICATIONS (bell icon) ===
+// Polls /api/notifications/unread every 60s and updates the badge. Clicking the
+// bell opens a panel that lists recent notifications for the current platform.
+// Notifications are filtered server-side by the user's platform context, so
+// switching platform automatically scopes the bell to that platform.
+var NOTIF_PANEL_OPEN = false;
+var NOTIF_LIST_CACHE = [];
+
+function refreshNotifBadge(){
+  if(typeof af!=='function')return;
+  af('/api/notifications/unread').then(function(d){
+    var badge=document.getElementById('notifBadge');
+    if(!badge)return;
+    if(d.unread>0){
+      badge.textContent=d.unread>99?'99+':String(d.unread);
+      badge.style.display='inline-block';
+    } else {
+      badge.style.display='none';
+    }
+  }).catch(function(){});
+}
+
+function loadNotifList(){
+  var list=document.getElementById('notifList');
+  if(!list)return;
+  list.innerHTML='<div style="padding:30px;text-align:center;color:var(--text3);font-size:12px">Chargement...</div>';
+  af('/api/notifications?limit=30').then(function(d){
+    NOTIF_LIST_CACHE=d.notifications||[];
+    if(NOTIF_LIST_CACHE.length===0){
+      list.innerHTML='<div style="padding:40px 20px;text-align:center;color:var(--text3);font-size:12px">Aucune notification pour le moment.</div>';
+      return;
+    }
+    var h='';
+    NOTIF_LIST_CACHE.forEach(function(n){
+      var dt=new Date(n.created_at);
+      var when=relativeTime(dt);
+      var icon=n.kind==='viral_confirmed'?'🔥':n.kind==='fast_growth'?'🚀':'🔔';
+      var color=n.kind==='viral_confirmed'?'var(--viral)':n.kind==='fast_growth'?'var(--orange)':'var(--accent)';
+      var link=n.url?('<a href="'+n.url+'" target="_blank" style="color:var(--accent);font-size:10px;text-decoration:none">Voir →</a>'):'';
+      h+='<div style="padding:12px 18px;border-bottom:1px solid var(--border);display:flex;gap:10px;align-items:flex-start">';
+      h+='<div style="font-size:18px;color:'+color+'">'+icon+'</div>';
+      h+='<div style="flex:1;min-width:0">';
+      h+='<div style="font-weight:700;font-size:12px;margin-bottom:2px">'+escapeHtml(n.title||'')+'</div>';
+      h+='<div style="font-size:11px;color:var(--text2);line-height:1.4">'+escapeHtml(n.body||'')+'</div>';
+      h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px"><span style="font-size:9px;color:var(--text3);text-transform:uppercase">'+when+' · '+escapeHtml(n.platform||'')+'</span>'+link+'</div>';
+      h+='</div></div>';
+    });
+    list.innerHTML=h;
+  }).catch(function(e){
+    list.innerHTML='<div style="padding:30px;text-align:center;color:var(--red);font-size:12px">Erreur: '+(e.message||'?')+'</div>';
+  });
+}
+
+function toggleNotifPanel(){
+  var panel=document.getElementById('notifPanel');
+  if(!panel)return;
+  NOTIF_PANEL_OPEN=!NOTIF_PANEL_OPEN;
+  panel.style.display=NOTIF_PANEL_OPEN?'block':'none';
+  if(NOTIF_PANEL_OPEN){
+    loadNotifList();
+    // Mark as read after a small delay so user sees the count first then it disappears
+    setTimeout(function(){
+      af('/api/notifications/mark-read',{method:'POST'}).then(function(){
+        refreshNotifBadge();
+      }).catch(function(){});
+    },800);
+  }
+}
+
+function markAllNotifsRead(){
+  af('/api/notifications/mark-read',{method:'POST'}).then(function(){
+    refreshNotifBadge();
+  }).catch(function(){});
+}
+
+// Close the notif panel when clicking outside of it
+document.addEventListener('click',function(e){
+  if(!NOTIF_PANEL_OPEN)return;
+  var panel=document.getElementById('notifPanel');
+  var btn=document.getElementById('notifBtn');
+  if(!panel||!btn)return;
+  if(panel.contains(e.target)||btn.contains(e.target))return;
+  NOTIF_PANEL_OPEN=false;
+  panel.style.display='none';
+});
+
+// Format a Date as "il y a 3 min", "il y a 2h", "hier", etc.
+function relativeTime(d){
+  var s=Math.floor((Date.now()-d.getTime())/1000);
+  if(s<60)return 'à l\'instant';
+  if(s<3600)return 'il y a '+Math.floor(s/60)+' min';
+  if(s<86400)return 'il y a '+Math.floor(s/3600)+' h';
+  if(s<172800)return 'hier';
+  return 'il y a '+Math.floor(s/86400)+' j';
+}
+
+// Start polling once the user is logged in. We hook into the existing init by
+// calling refreshNotifBadge once at boot and every 60s after.
+function startNotifPolling(){
+  refreshNotifBadge();
+  if(window._notifTimer)clearInterval(window._notifTimer);
+  window._notifTimer=setInterval(refreshNotifBadge,60000);
+}
 // We persist the user's preference in localStorage so it survives reloads.
 // The body classlist is the single source of truth ("theme-light" class).
 function applyTheme(theme){
