@@ -1357,13 +1357,32 @@ makeChart('globalPie',{type:'doughnut',data:{labels:['Instagram','Twitter','Geel
 makeChart('globalBar',{type:'bar',data:{labels:['Vues','Likes','Posts'],datasets:[{label:'Instagram',data:[igV,igL,igP],backgroundColor:'rgba(225,48,108,0.7)',borderRadius:6},{label:'Twitter',data:[twV,twL,twP],backgroundColor:'rgba(29,161,242,0.7)',borderRadius:6},{label:'Geelark',data:[glV,glL,glP],backgroundColor:'rgba(0,200,83,0.7)',borderRadius:6}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:'#94a3b8',font:{size:11}}}},scales:{x:{grid:{display:false},ticks:{color:'#64748b'}},y:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'#64748b'}}}}})})}
 
 // ==================== VA DETAIL MODAL (with full post timeline) ====================
-function openVA(id,name){var date=dDate(0);if(document.getElementById('lbDate'))date=document.getElementById('lbDate').value||date;
-af('/api/va/'+id+'?date='+date).then(function(d){
+function openVA(id,name){
+  // Build the API URL based on the currently selected global period.
+  // 'today'/'yesterday'         → ?date=YYYY-MM-DD (single day, legacy)
+  // '7'/'15'/'30'/'90'           → ?from=...&to=... (range)
+  // 'custom'                     → ?from=...&to=... (user-defined range)
+  // 'all'                        → ?all=1 (all-time)
+  var p=getGlobalPeriod();
+  var qs='';
+  if(p==='today'){qs='?date='+dDate(0);}
+  else if(p==='yesterday'){qs='?date='+dDate(-1);}
+  else if(p==='all'){qs='?all=1';}
+  else if(p==='custom'){
+    qs='?from='+encodeURIComponent(getGlobalDateFrom())+'&to='+encodeURIComponent(getGlobalDateTo());
+  } else {
+    var n=parseInt(p,10)||7;
+    qs='?from='+encodeURIComponent(dDate(-(n-1)))+'&to='+encodeURIComponent(dDate(0));
+  }
+  af('/api/va/'+id+qs).then(function(d){
 var h='<h2>'+name+' <button class="close" onclick="closeModal()">✕</button></h2>';
 if(d.stats){var tv=Number(d.stats.total_views),tl=Number(d.stats.total_likes),tc=Number(d.stats.total_comments);var eng=tv>0?((tl+tc)/tv*100).toFixed(1):'0.0';var score=tl+tc*3;var avgV=Number(d.stats.post_count)>0?Math.round(tv/Number(d.stats.post_count)):0;var badge=avgV>=2000?'top':avgV>=500?'bon':'faible';
+// Show the period the modal is reflecting
+var periodLabel=resolveGlobalPeriod().label;
+h+='<div style="margin-bottom:8px;color:var(--text3);font-size:11px;text-transform:uppercase;letter-spacing:0.5px">Periode : '+periodLabel+'</div>';
 h+='<div style="margin-bottom:16px">'+vaBadge(badge)+'</div>';
 h+='<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:20px">';
-h+='<div class="kpi" style="padding:12px"><div style="font-size:9px;color:var(--text3);text-transform:uppercase">Posts</div><div style="font-size:18px;font-weight:800">'+d.stats.post_count+'/6</div></div>';
+h+='<div class="kpi" style="padding:12px"><div style="font-size:9px;color:var(--text3);text-transform:uppercase">Posts</div><div style="font-size:18px;font-weight:800">'+d.stats.post_count+'</div></div>';
 h+='<div class="kpi" style="padding:12px"><div style="font-size:9px;color:var(--text3);text-transform:uppercase">Vues</div><div style="font-size:18px;font-weight:800;color:var(--purple)">'+fm(tv)+'</div></div>';
 h+='<div class="kpi" style="padding:12px"><div style="font-size:9px;color:var(--text3);text-transform:uppercase">Likes</div><div style="font-size:18px;font-weight:800;color:var(--accent)">'+fm(tl)+'</div></div>';
 h+='<div class="kpi" style="padding:12px"><div style="font-size:9px;color:var(--text3);text-transform:uppercase">Score</div><div style="font-size:18px;font-weight:800;color:var(--orange)">'+fm(score)+'</div></div>';
@@ -1378,7 +1397,7 @@ if(p.snapshots.length>1){h+='<div style="margin-top:14px"><div style="font-size:
 p.snapshots.forEach(function(s,si){var time=new Date(s.scraped_at).toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});var prevV=si>0?Number(p.snapshots[si-1].views):0;var delta=Number(s.views)-prevV;var deltaStr=si===0?'-':(delta>=0?'+':'')+fm(delta);var deltaCol=delta>0?'var(--green)':delta<0?'var(--red)':'var(--text3)';h+='<tr><td>'+time+'</td><td>'+fm(s.views)+'</td><td>'+fm(s.likes)+'</td><td>'+fm(s.comments)+'</td><td style="color:'+deltaCol+';font-weight:600">'+deltaStr+'</td></tr>'});
 h+='</tbody></table></div>'}
 h+='</div>'});
-if(d.posts.length===0)h+='<p style="color:var(--text3);text-align:center;padding:30px">Aucun post ce jour</p>';
+if(d.posts.length===0)h+='<p style="color:var(--text3);text-align:center;padding:30px">Aucun post sur cette periode</p>';
 document.getElementById('modalContent').innerHTML=h;document.getElementById('modalBg').classList.add('show')})}
 function closeModal(){document.getElementById('modalBg').classList.remove('show')}
 
