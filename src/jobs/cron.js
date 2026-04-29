@@ -22,6 +22,43 @@ function initCronJobs(client) {
     } catch (err) { console.error('Notif prune failed:', err.message); }
   }, { timezone: 'Africa/Porto-Novo' });
 
+  // Daily VA-inactive detection at 10:00 Bénin time. We pick a morning hour so
+  // the manager can react during work hours. We check each platform separately
+  // (a VA might be active on Twitter but not Instagram).
+  // Threshold: 72h with no posts. We ignore VAs gone for >14 days (they probably
+  // left the agency and we don't want to re-notify forever).
+  cron.schedule('0 10 * * *', async function() {
+    try {
+      var platforms = config.getActivePlatforms();
+      for (var i = 0; i < platforms.length; i++) {
+        var plat = platforms[i];
+        var inactive = await db.findInactiveVAs(plat, 72);
+        for (var j = 0; j < inactive.length; j++) {
+          var v = inactive[j];
+          var lastPost = new Date(v.last_post_at);
+          var hoursSince = Math.round((Date.now() - lastPost.getTime()) / 3600000);
+          var dayCount = Math.floor(hoursSince / 24);
+          var dayStr = dayCount + ' jour' + (dayCount > 1 ? 's' : '');
+          try {
+            await db.insertNotification(
+              plat,
+              'va_inactive',
+              null,
+              v.va_name,
+              '😴 VA inactif',
+              v.va_name + ' n\'a pas poste depuis ' + dayStr + ' sur ' + plat + '. A relancer ?',
+              null,
+              { vaDiscordId: v.va_discord_id, hoursSinceLastPost: hoursSince, lastPostAt: v.last_post_at }
+            );
+          } catch (e) { /* skip dup or bad row, continue with next VA */ }
+        }
+        if (inactive.length > 0) {
+          console.log('[Notif] va_inactive: ' + inactive.length + ' VA(s) inactifs sur ' + plat);
+        }
+      }
+    } catch (err) { console.error('VA inactive cron failed:', err.message); }
+  }, { timezone: 'Africa/Porto-Novo' });
+
   // Daily summary at 23:59 Africa/Porto-Novo (Benin) — for each platform.
   // Same TZ as personal recap so both are aligned with the team's working day.
   cron.schedule('59 23 * * *', async function() {
