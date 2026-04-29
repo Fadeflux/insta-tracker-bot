@@ -68,6 +68,64 @@ var scrapeWorker = new Worker(
 
     var snapshot = await db.insertSnapshot(postId, stats);
 
+    // === IN-APP NOTIFICATIONS ===
+    // Two events trigger a bell-icon notification on the dashboard:
+    //   - 'viral_confirmed': post crosses the VIRAL_VIEWS threshold for the first
+    //     time (we use the previous snapshot to detect the crossing edge).
+    //   - 'fast_growth': post gained > 1000 views since the previous scrape AND
+    //     the time elapsed is ≤ 75 minutes (so we approximate views/hour).
+    // Wrapped in try/catch so a notif failure never breaks the scrape pipeline.
+    try {
+      var prevViews = previousSnapshot ? Number(previousSnapshot.views || 0) : 0;
+      var curViews = Number(stats.views || 0);
+      var viralThreshold = config.scoring && config.scoring.viralViews ? config.scoring.viralViews : 5000;
+      var postUrl = url;
+      var vaName = post.va_name || '?';
+      var titleBase = (post.account_username ? '@' + post.account_username : vaName);
+
+      // Edge: just crossed viral threshold
+      if (curViews >= viralThreshold && prevViews < viralThreshold) {
+        await db.insertNotification(
+          platform,
+          'viral_confirmed',
+          postId,
+          vaName,
+          '🔥 Post viral confirmé !',
+          titleBase + ' a atteint ' + curViews.toLocaleString('fr-FR') + ' vues sur ' + platform + '.',
+          postUrl,
+          { views: curViews, likes: stats.likes || 0, comments: stats.comments || 0 }
+        );
+        logger.info('[Notif] viral_confirmed for post ' + postId + ' (' + curViews + ' views)');
+      }
+
+      // Fast growth: significant jump in a short window
+      if (previousSnapshot && previousSnapshot.scraped_at) {
+        var elapsedMin = (Date.now() - new Date(previousSnapshot.scraped_at).getTime()) / 60000;
+        var deltaViews = curViews - prevViews;
+        // Heuristic: > 1000 vues gagnées AND délai ≤ 75 min (≈ 1 scrape horaire)
+        // AND on est en jour 1 (pour ne pas spammer sur les vieux posts qui ont
+        // un intervalle de 12h+).
+        if (elapsedMin > 0 && elapsedMin <= 75 && deltaViews >= 1000) {
+          var ageH = (Date.now() - new Date(post.created_at).getTime()) / 3600000;
+          if (ageH < 24) {
+            await db.insertNotification(
+              platform,
+              'fast_growth',
+              postId,
+              vaName,
+              '🚀 Croissance rapide',
+              titleBase + ' a gagné ' + deltaViews.toLocaleString('fr-FR') + ' vues en ' + Math.round(elapsedMin) + ' min (total: ' + curViews.toLocaleString('fr-FR') + ').',
+              postUrl,
+              { views: curViews, deltaViews: deltaViews, elapsedMin: Math.round(elapsedMin) }
+            );
+            logger.info('[Notif] fast_growth for post ' + postId + ' (+' + deltaViews + ' views)');
+          }
+        }
+      }
+    } catch (notifErr) {
+      logger.warn('[Notif] insert failed: ' + notifErr.message);
+    }
+
     await notifyQueue.add('hourly-update', {
       postId: postId,
       currentStats: stats,
