@@ -89,28 +89,98 @@ scrapeWorker.on('completed', function(job) { logger.info('Scrape job completed: 
 // Returns the delay in milliseconds, or null if no more scrapes are needed.
 //
 // For Threads: 4 scrapes total at H+1, H+6, H+12, H+24 (spares the API accounts).
-// For others (IG/Twitter/Geelark): hourly scraping for ~24h.
+// For Instagram/Twitter/Geelark: 72h tracking window.
+//   - Day 1 (0-24h): hourly (24 scrapes)
+//   - Day 2 (24-48h): twice (at H+36 and H+48)
+//   - Day 3 (48-72h): twice (at H+60 and H+72)
+//   Total: 28 scrapes per post over 3 days.
 function computeNextScrapeDelay(postCreatedAt, platform) {
+  var ageMs = Date.now() - new Date(postCreatedAt).getTime();
+  var ageMin = ageMs / 60000;
+
   if (platform === 'threads') {
-    var ageMs = Date.now() - new Date(postCreatedAt).getTime();
-    var ageMin = ageMs / 60000;
-    // Schedule (in minutes from creation): 60 (H+1), 360 (H+6), 720 (H+12), 1440 (H+24)
-    var schedule = [60, 360, 720, 1440];
-    for (var i = 0; i < schedule.length; i++) {
-      if (ageMin < schedule[i]) {
-        return Math.round((schedule[i] - ageMin) * 60000);
+    // Sparser schedule for Threads to spare the sacrificial accounts
+    var threadsSchedule = [60, 360, 720, 1440]; // H+1, H+6, H+12, H+24
+    for (var i = 0; i < threadsSchedule.length; i++) {
+      if (ageMin < threadsSchedule[i]) {
+        return Math.round((threadsSchedule[i] - ageMin) * 60000);
       }
     }
-    return null; // past H+24, no more scrapes
+    return null;
   }
-  // Default: 1 hour for all other platforms
-  return 60 * 60 * 1000;
+
+  // Build the schedule for IG/Twitter/Geelark:
+  //   Day 1: every hour from H+1 to H+24 → [60, 120, 180, ..., 1440]
+  //   Day 2: H+36 (2160) and H+48 (2880)
+  //   Day 3: H+60 (3600) and H+72 (4320)
+  var schedule = [];
+  for (var h = 1; h <= 24; h++) schedule.push(h * 60);
+  schedule.push(36 * 60); // 2160
+  schedule.push(48 * 60); // 2880
+  schedule.push(60 * 60); // 3600
+  schedule.push(72 * 60); // 4320
+
+  for (var k = 0; k < schedule.length; k++) {
+    if (ageMin < schedule[k]) {
+      return Math.round((schedule[k] - ageMin) * 60000);
+    }
+  }
+  return null; // past H+72, no more scrapes
 }
 
 async function scheduleInitialScrape(postId, url, platform) {
   platform = platform || 'instagram';
   await scrapeQueue.add('scrape-post', { postId: postId, url: url, platform: platform }, { jobId: 'scrape-' + postId + '-initial', delay: 5000 });
   logger.info('[' + platform.toUpperCase() + '] Scheduled initial scrape for post ' + postId);
+}
+
+// Called at bot startup. Looks at posts that should still be tracked (within their
+// 72h window) and schedules a scrape for each one. Necessary because:
+//   - Bull jobs aren't durable across redeploys reliably (depends on Redis state)
+//   - Posts whose tracking_end was bumped by the migration need to resume scraping
+//   - We want to recover gracefully from any missed scheduling
+async function resumeOrphanScrapes() {
+  try {
+    var pool = require('../db/queries').pool;
+    if (!pool) {
+      // Fallback: load directly via the db module if pool isn't exposed
+      var db = require('../db/queries');
+      pool = db.pool;
+    }
+    var db2 = require('../db/queries');
+    var result = await db2.pool.query(
+      "SELECT id, url, platform, created_at FROM posts " +
+      "WHERE deleted_at IS NULL " +
+      "  AND tracking_end > NOW() " +
+      "  AND created_at >= NOW() - INTERVAL '72 hours' " +
+      "ORDER BY created_at DESC"
+    );
+
+    if (result.rows.length === 0) {
+      logger.info('[Scrape] No orphan posts to resume');
+      return;
+    }
+
+    var resumed = 0;
+    for (var i = 0; i < result.rows.length; i++) {
+      var p = result.rows[i];
+      var nextDelay = computeNextScrapeDelay(p.created_at, p.platform);
+      if (nextDelay == null) continue;
+      try {
+        await scrapeQueue.add(
+          'scrape-post',
+          { postId: p.id, url: p.url, platform: p.platform },
+          { delay: nextDelay, jobId: 'scrape-' + p.id + '-resume-' + Date.now() }
+        );
+        resumed++;
+      } catch (e) {
+        // Job might already exist — ignore
+      }
+    }
+    logger.info('[Scrape] Resumed scraping for ' + resumed + ' orphan posts (window: 72h)');
+  } catch (e) {
+    logger.warn('[Scrape] resumeOrphanScrapes failed: ' + e.message);
+  }
 }
 
 async function getQueueStats() {
@@ -120,4 +190,4 @@ async function getQueueStats() {
   return { waiting: waiting, active: active, delayed: delayed };
 }
 
-module.exports = { scrapeQueue: scrapeQueue, notifyQueue: notifyQueue, scrapeWorker: scrapeWorker, scheduleInitialScrape: scheduleInitialScrape, getQueueStats: getQueueStats };
+module.exports = { scrapeQueue: scrapeQueue, notifyQueue: notifyQueue, scrapeWorker: scrapeWorker, scheduleInitialScrape: scheduleInitialScrape, resumeOrphanScrapes: resumeOrphanScrapes, getQueueStats: getQueueStats };
