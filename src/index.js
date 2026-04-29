@@ -74,6 +74,17 @@ client.once('ready', async function() {
   initCronJobs(client);
   // Register slash commands (idempotent — safe to run on every boot)
   registerSlashCommands().catch(function(err) { console.error('[Commands] registerSlashCommands threw:', err.message); });
+  // Resume scraping for posts whose tracking window is still open. This catches
+  // up any posts whose scrape jobs were lost during the redeploy or whose
+  // tracking_end was just extended by the migration.
+  try {
+    var scrapeQueueModule = require('./jobs/scrapeQueue');
+    if (scrapeQueueModule.resumeOrphanScrapes) {
+      scrapeQueueModule.resumeOrphanScrapes().catch(function(err) {
+        console.error('[Scrape] resumeOrphanScrapes failed:', err.message);
+      });
+    }
+  } catch (e) { console.error('[Scrape] resume require failed:', e.message); }
   console.log('All systems operational');
 });
 
