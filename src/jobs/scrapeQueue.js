@@ -43,10 +43,27 @@ var scrapeWorker = new Worker(
     var previousSnapshot = await db.getLatestSnapshot(postId);
     var stats = await scrapeByPlatform(url, platform);
 
+    // Report to crash-alerts subsystem. We treat "stats.error" as a hard failure.
+    // Wrapped in try/catch with a no-op fallback because reporting must NEVER
+    // crash the scrape worker — if Discord is down, scraping must keep going.
+    var crashAlerts = null;
+    try { crashAlerts = require('./crashAlerts'); } catch (e) {}
+
     if (stats.error) {
+      // Hard failure → increment per-platform counter
+      if (crashAlerts) {
+        try { await crashAlerts.reportFailure(platform, stats.error); }
+        catch (e) { logger.warn('[CrashAlert] reportFailure threw: ' + e.message); }
+      }
       await db.insertSnapshot(postId, stats);
       logger.warn('[' + platform.toUpperCase() + '] Scrape error for post ' + postId + ': ' + stats.error);
       return;
+    }
+
+    // Success path → reset counter + send recovery message if we were down
+    if (crashAlerts) {
+      try { await crashAlerts.reportSuccess(platform); }
+      catch (e) { logger.warn('[CrashAlert] reportSuccess threw: ' + e.message); }
     }
 
     var snapshot = await db.insertSnapshot(postId, stats);
