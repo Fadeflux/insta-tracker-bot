@@ -57,6 +57,39 @@ var scrapeWorker = new Worker(
       }
       await db.insertSnapshot(postId, stats);
       logger.warn('[' + platform.toUpperCase() + '] Scrape error for post ' + postId + ': ' + stats.error);
+
+      // === ACCOUNT DISABLED detection ===
+      // If the error suggests the post (or the account) is gone — 404, "not found",
+      // "page not available", "user not found" — fire a notif so the manager
+      // knows the account got banned/disabled by the platform.
+      try {
+        var errLower = String(stats.error).toLowerCase();
+        var isAccountDead =
+          errLower.indexOf('404') !== -1 ||
+          errLower.indexOf('not found') !== -1 ||
+          errLower.indexOf('page not available') !== -1 ||
+          errLower.indexOf('user not found') !== -1 ||
+          errLower.indexOf('this account') !== -1 ||
+          errLower.indexOf('cette page') !== -1 ||
+          errLower.indexOf('compte introuvable') !== -1;
+        if (isAccountDead && post.account_id) {
+          var accUser = post.account_username || '?';
+          await db.insertNotification(
+            platform,
+            'account_disabled',
+            postId,
+            post.va_name || '?',
+            '⛔ Compte introuvable',
+            '@' + accUser + ' (gere par ' + (post.va_name||'?') + ') retourne une erreur ' + (errLower.indexOf('404')!==-1?'404':'"not found"') + '. Le compte a peut-etre ete banni ou supprime.',
+            null,
+            { accountUsername: accUser, accountId: post.account_id, error: String(stats.error).substring(0,200) }
+          );
+          logger.info('[Notif] account_disabled for @' + accUser + ' (error: ' + errLower.substring(0,80) + ')');
+        }
+      } catch (adErr) {
+        logger.warn('[Notif] account_disabled detection failed: ' + adErr.message);
+      }
+
       return;
     }
 
