@@ -1419,6 +1419,61 @@ async function pruneOldNotifications() {
   return r.rowCount;
 }
 
+// === SHADOWBAN DETECTION ===
+// Checks the 3 most recent posts of a given account (must be at least 24h old
+// so they had time to accumulate views). If ALL 3 have < 300 views, the account
+// is considered probably shadowbanned. Returns an object describing the state,
+// or null if not enough data / not shadowbanned.
+//
+// Returns:
+//   null  → not shadowbanned (one of the last 3 posts has ≥300 views, or fewer
+//           than 3 posts exist that are old enough)
+//   { failedCount, accountUsername, vaName, vaDiscordId, platform, postIds, latestPostId }
+//          → shadowbanned. failedCount is the streak of consecutive <300 posts
+//            from the most recent post going back.
+async function detectShadowbannedAccount(accountId) {
+  if (!accountId) return null;
+
+  // Get all posts for this account (excluding deleted), ordered most recent first.
+  // We only consider posts ≥24h old so we don't flag fresh posts that simply
+  // haven't accumulated views yet.
+  var sql =
+    "SELECT p.id, p.account_username, p.va_name, p.va_discord_id, p.platform, p.created_at, " +
+    "       COALESCE(s.views, 0) AS views " +
+    "FROM posts p " +
+    "LEFT JOIN LATERAL ( " +
+    "  SELECT views FROM snapshots sn WHERE sn.post_id = p.id ORDER BY sn.scraped_at DESC LIMIT 1 " +
+    ") s ON true " +
+    "WHERE p.account_id = $1 " +
+    "  AND p.deleted_at IS NULL " +
+    "  AND p.created_at < NOW() - INTERVAL '24 hours' " +
+    "ORDER BY p.created_at DESC";
+  var result = await pool.query(sql, [accountId]);
+  var posts = result.rows;
+
+  if (posts.length < 3) return null;
+
+  // Count the streak of consecutive <300 view posts from the most recent
+  var streak = 0;
+  for (var i = 0; i < posts.length; i++) {
+    if (Number(posts[i].views) < 300) streak++;
+    else break;
+  }
+
+  if (streak < 3) return null;
+
+  return {
+    accountId: accountId,
+    accountUsername: posts[0].account_username || '?',
+    vaName: posts[0].va_name || '?',
+    vaDiscordId: posts[0].va_discord_id,
+    platform: posts[0].platform,
+    failedCount: streak,
+    latestPostId: posts[0].id,
+    postIds: posts.slice(0, streak).map(function(p) { return p.id; }),
+  };
+}
+
 module.exports = {
   pool: require('./init').pool,
   // Permissions
@@ -1443,6 +1498,7 @@ module.exports = {
   softDeletePost, restorePost, getPostBasics,
   // Notifications
   insertNotification, getNotifications, getUnreadCount, markNotificationsRead, pruneOldNotifications,
+  detectShadowbannedAccount,
   // Streaks
   updateStreak, getAllStreaks,
   // Alerts
