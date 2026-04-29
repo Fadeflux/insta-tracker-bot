@@ -341,6 +341,109 @@ if(t==='dash')loadDash();else if(t==='lb')loadLB();else if(t==='reco')loadReco()
 // Helpers
 function fm(n){return n==null?'0':Number(n).toLocaleString('fr-FR')}
 
+// === UNIFIED PERIOD FILTER ===
+// A single global period state shared across Dashboard, Classement, Recommandations,
+// and Heures. When the user picks "7 jours" on one page, all the other pages will
+// pick up the same value when they're next opened. The choice persists in localStorage
+// so it survives reloads and re-logins.
+//
+// Period values:
+//   'today'     → today only
+//   'yesterday' → yesterday only
+//   '7'         → last 7 days
+//   '15'        → last 15 days
+//   '30'        → last 30 days
+//   'all'       → since the beginning
+//   'custom'    → user-defined date range (uses GLOBAL_DATE_FROM and GLOBAL_DATE_TO)
+//
+// Each page reads window.GLOBAL_PERIOD on load. Buttons call setGlobalPeriod() so
+// the change is immediately persisted and broadcast.
+function getGlobalPeriod(){
+  if(!window.GLOBAL_PERIOD){
+    window.GLOBAL_PERIOD=localStorage.getItem('globalPeriod')||'today';
+  }
+  return window.GLOBAL_PERIOD;
+}
+function setGlobalPeriod(p){
+  window.GLOBAL_PERIOD=p;
+  try{localStorage.setItem('globalPeriod',p);}catch(e){}
+}
+function getGlobalDateFrom(){
+  if(!window.GLOBAL_DATE_FROM)window.GLOBAL_DATE_FROM=localStorage.getItem('globalDateFrom')||dDate(-7);
+  return window.GLOBAL_DATE_FROM;
+}
+function getGlobalDateTo(){
+  if(!window.GLOBAL_DATE_TO)window.GLOBAL_DATE_TO=localStorage.getItem('globalDateTo')||dDate(0);
+  return window.GLOBAL_DATE_TO;
+}
+function setGlobalDateRange(from,to){
+  window.GLOBAL_DATE_FROM=from;
+  window.GLOBAL_DATE_TO=to;
+  try{
+    localStorage.setItem('globalDateFrom',from);
+    localStorage.setItem('globalDateTo',to);
+  }catch(e){}
+}
+
+// Render the unified period button bar. Returns HTML string.
+// onChange is the name of the function to call when a period button is clicked
+// (each page has its own loadXxx function — we call that to refresh the page).
+function periodButtonsHtml(onChange){
+  var p=getGlobalPeriod();
+  var periods=[
+    {k:'today',l:'Aujourd\'hui'},
+    {k:'yesterday',l:'Hier'},
+    {k:'7',l:'7 jours'},
+    {k:'15',l:'15 jours'},
+    {k:'30',l:'30 jours'},
+    {k:'all',l:'Depuis toujours'}
+  ];
+  var h='<div class="filters" style="flex-wrap:wrap;gap:8px;align-items:center">';
+  periods.forEach(function(per){
+    var active=(p===per.k);
+    h+='<button class="btn-sm '+(active?'':'btn-off')+'" onclick="changeGlobalPeriod(\''+per.k+'\',\''+onChange+'\')">'+per.l+'</button>';
+  });
+  h+='<button class="btn-sm '+(p==='custom'?'':'btn-off')+'" onclick="changeGlobalPeriod(\'custom\',\''+onChange+'\')">Date</button>';
+  if(p==='custom'){
+    h+='<input type="date" id="globalDateFrom" value="'+getGlobalDateFrom()+'" style="margin-left:8px;background:var(--bg3);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 8px">';
+    h+='<span style="color:var(--text3);margin:0 4px">→</span>';
+    h+='<input type="date" id="globalDateTo" value="'+getGlobalDateTo()+'" style="background:var(--bg3);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:6px 8px">';
+    h+='<button class="btn-sm" onclick="applyGlobalCustomDate(\''+onChange+'\')">Appliquer</button>';
+  }
+  h+='</div>';
+  return h;
+}
+
+function changeGlobalPeriod(p,onChange){
+  setGlobalPeriod(p);
+  if(typeof window[onChange]==='function')window[onChange]();
+}
+function applyGlobalCustomDate(onChange){
+  var from=document.getElementById('globalDateFrom').value;
+  var to=document.getElementById('globalDateTo').value;
+  if(!from||!to)return;
+  if(from>to){var t=from;from=to;to=t;}
+  setGlobalDateRange(from,to);
+  if(typeof window[onChange]==='function')window[onChange]();
+}
+
+// Translate a global period to the date range / API param used by the existing
+// API endpoints. Returns an object { mode, fromDate, toDate, days } depending
+// on the period kind.
+function resolveGlobalPeriod(){
+  var p=getGlobalPeriod();
+  if(p==='today')return{mode:'single',fromDate:dDate(0),toDate:dDate(0),days:1,label:'Aujourd\'hui'};
+  if(p==='yesterday')return{mode:'single',fromDate:dDate(-1),toDate:dDate(-1),days:1,label:'Hier'};
+  if(p==='all')return{mode:'all',fromDate:null,toDate:null,days:null,label:'Depuis toujours'};
+  if(p==='custom'){
+    var f=getGlobalDateFrom(),t=getGlobalDateTo();
+    return{mode:'range',fromDate:f,toDate:t,days:null,label:f+' → '+t};
+  }
+  // numeric: 7, 15, 30
+  var d=parseInt(p,10)||7;
+  return{mode:'range',fromDate:dDate(-(d-1)),toDate:dDate(0),days:d,label:d+' derniers jours'};
+}
+
 // === IN-APP NOTIFICATIONS (bell icon) ===
 // Polls /api/notifications/unread every 60s and updates the badge. Clicking the
 // bell opens a panel that lists recent notifications for the current platform.
@@ -630,20 +733,37 @@ function makeChart(id,cfg){
 }
 
 // ==================== DASHBOARD ====================
+// DASH_MODE is kept as a legacy alias; the single source of truth is now getGlobalPeriod().
 var DASH_MODE='today';
+
 function loadDash(){
-var h='<div class="filters">';
-['today','yesterday','7d','30d','all'].forEach(function(m){var labels={today:'Aujourd\'hui',yesterday:'Hier','7d':'7 jours','30d':'30 jours','all':'Depuis toujours'};h+='<button class="btn-sm '+(DASH_MODE===m?'':'btn-off')+'" onclick="DASH_MODE=\''+m+'\';loadDashData()">'+labels[m]+'</button>'});
-h+='<input type="date" id="dashDate" value="'+dDate(0)+'">';
-h+='<button class="btn-sm btn-off" onclick="DASH_MODE=\'custom\';loadDashData()">Charger</button>';
-h+='</div><div id="dashArea"><p style="color:var(--text3);text-align:center;padding:60px">Chargement...</p></div>';
-document.getElementById('content').innerHTML=h;loadDashData()}
+  var h=periodButtonsHtml('loadDashData');
+  h+='<div id="dashArea"><p style="color:var(--text3);text-align:center;padding:60px">Chargement...</p></div>';
+  document.getElementById('content').innerHTML=h;
+  loadDashData();
+}
 
 function loadDashData(){
-destroyCharts();
-if(DASH_MODE==='all'){loadAllTimeDash();return}
-if(DASH_MODE==='7d'||DASH_MODE==='30d'){loadMultiDay(DASH_MODE==='7d'?7:30);return}
-var date=DASH_MODE==='yesterday'?dDate(-1):DASH_MODE==='custom'?(document.getElementById('dashDate')||{}).value||dDate(0):dDate(0);
+  destroyCharts();
+  var p=getGlobalPeriod();
+  DASH_MODE=p; // keep legacy var in sync for the auto-refresh check below
+  if(p==='all'){loadAllTimeDash();return}
+  if(p==='7'||p==='15'||p==='30'){loadMultiDay(parseInt(p,10));return}
+  if(p==='custom'){
+    var from=getGlobalDateFrom(),to=getGlobalDateTo();
+    if(from===to){loadSingleDayDash(from);return}
+    // For a custom range >1 day, fall back to multi-day-style aggregation.
+    // We compute the number of days and call loadMultiDay with that.
+    var days=Math.max(1,Math.round((new Date(to)-new Date(from))/86400000)+1);
+    loadMultiDay(days);
+    return;
+  }
+  // 'today' or 'yesterday' → single-day view
+  var date=p==='yesterday'?dDate(-1):dDate(0);
+  loadSingleDayDash(date);
+}
+
+function loadSingleDayDash(date){
 af('/api/stats/'+date).then(function(d){
 var s=d.summaries.map(function(x){var tv=Number(x.total_views),tl=Number(x.total_likes),tc=Number(x.total_comments),ts=Number(x.total_shares||0),pc=Number(x.post_count);x.avg_views=pc>0?Math.round(tv/pc):0;x.total_score=tl+tc*3+ts*5;x.engagement_rate=tv>0?((tl+tc)/tv*100).toFixed(1):'0.0';x.badge=x.avg_views>=2000?'top':x.avg_views>=500?'bon':'faible';return x}).sort(function(a,b){return Number(b.total_views)-Number(a.total_views)});
 var tv=0,tl=0,tc=0,ts=0,tp=0,tsc=0;
@@ -793,34 +913,10 @@ function loadAllTimeDash(){
 
 // ==================== CLASSEMENT ====================
 function loadLB(){
-  // Period buttons (like Dashboard / Recommandations)
-  if(!window.LB_PERIOD)window.LB_PERIOD='today';
-  var periods=[
-    {k:'today',l:'Aujourd\'hui'},
-    {k:'yesterday',l:'Hier'},
-    {k:'7d',l:'7 jours'},
-    {k:'15d',l:'15 jours'},
-    {k:'30d',l:'30 jours'},
-    {k:'all',l:'Depuis toujours'}
-  ];
-  var h='<div class="filters" style="flex-wrap:wrap;gap:8px;align-items:center">';
-  periods.forEach(function(p){
-    var active=(window.LB_PERIOD===p.k);
-    h+='<button class="btn-sm '+(active?'':'btn-off')+'" onclick="setLBPeriod(\''+p.k+'\')">'+p.l+'</button>';
-  });
-  h+='<button class="btn-sm '+(window.LB_PERIOD==='custom'?'':'btn-off')+'" onclick="setLBPeriod(\'custom\')">Date</button>';
-  if(window.LB_PERIOD==='custom'){
-    h+='<input type="date" id="lbDate" value="'+dDate(0)+'" style="padding:8px 12px;border-radius:8px;background:var(--bg3);color:var(--text1);border:1px solid var(--border)">';
-    h+='<button class="btn-sm" onclick="loadLBData()">Charger</button>';
-  }
-  h+='</div><div id="lbArea"></div>';
+  var h=periodButtonsHtml('loadLBData');
+  h+='<div id="lbArea"></div>';
   document.getElementById('content').innerHTML=h;
   loadLBData();
-}
-
-function setLBPeriod(p){
-  window.LB_PERIOD=p;
-  loadLB();
 }
 
 // Builds the leaderboard from one of three sources depending on the period:
@@ -828,31 +924,54 @@ function setLBPeriod(p){
 //   - 7d/15d/30d:             GET /api/history/N then aggregate per VA
 //   - all:                    GET /api/all-time-stats (already aggregated server-side)
 function loadLBData(){
-  var p=window.LB_PERIOD||'today';
-  if(p==='today'||p==='yesterday'||p==='custom'){
-    var date=p==='yesterday'?dDate(-1):p==='custom'?(document.getElementById('lbDate')||{}).value||dDate(0):dDate(0);
+  var p=getGlobalPeriod();
+  if(p==='today'||p==='yesterday'){
+    var date=p==='yesterday'?dDate(-1):dDate(0);
     af('/api/leaderboard?date='+date).then(function(d){renderLB(d.rankings, periodLabelLB(p,date))})
       .catch(function(e){lbError(e)});
+  } else if(p==='custom'){
+    // Custom range: if from===to, single day; otherwise aggregate
+    var from=getGlobalDateFrom(),to=getGlobalDateTo();
+    if(from===to){
+      af('/api/leaderboard?date='+from).then(function(d){renderLB(d.rankings, from)})
+        .catch(function(e){lbError(e)});
+    } else {
+      var days=Math.max(1,Math.round((new Date(to)-new Date(from))/86400000)+1);
+      af('/api/history/'+days).then(function(d){
+        var byVa={};
+        d.history.forEach(function(day){
+          day.summaries.forEach(function(s){
+            var key=s.va_discord_id;
+            if(!byVa[key]){
+              byVa[key]={va_discord_id:s.va_discord_id,va_name:s.va_name,post_count:0,total_views:0,total_likes:0,total_comments:0,total_shares:0};
+            }
+            byVa[key].post_count+=Number(s.post_count)||0;
+            byVa[key].total_views+=Number(s.total_views)||0;
+            byVa[key].total_likes+=Number(s.total_likes)||0;
+            byVa[key].total_comments+=Number(s.total_comments)||0;
+            byVa[key].total_shares+=Number(s.total_shares||0);
+          });
+        });
+        var rows=Object.values(byVa);
+        var rankings=normalizeRankings(rows);
+        renderLB(rankings, from+' → '+to);
+      }).catch(function(e){lbError(e)});
+    }
   } else if(p==='all'){
     af('/api/all-time-stats').then(function(d){
       var rankings=normalizeRankings(d.summaries);
       renderLB(rankings, 'Depuis toujours');
     }).catch(function(e){lbError(e)});
   } else {
-    // 7d/15d/30d: aggregate via history
+    // 7/15/30: aggregate via history
     var n=parseInt(p);
     af('/api/history/'+n).then(function(d){
-      // Collect all per-VA totals across the days
       var byVa={};
       d.history.forEach(function(day){
         day.summaries.forEach(function(s){
           var key=s.va_discord_id;
           if(!byVa[key]){
-            byVa[key]={
-              va_discord_id:s.va_discord_id,
-              va_name:s.va_name,
-              post_count:0,total_views:0,total_likes:0,total_comments:0,total_shares:0
-            };
+            byVa[key]={va_discord_id:s.va_discord_id,va_name:s.va_name,post_count:0,total_views:0,total_likes:0,total_comments:0,total_shares:0};
           }
           byVa[key].post_count+=Number(s.post_count)||0;
           byVa[key].total_views+=Number(s.total_views)||0;
@@ -927,23 +1046,9 @@ function renderLB(rankings,label){
 // User can click a perf tier (Viral/Bon/Moyen/Flop) to see the matching posts.
 // A search bar filters the visible posts by VA name or caption.
 function loadReco(){
-  // Period buttons (like Dashboard) — RECO_PERIOD stores the active one.
-  var periods=[
-    {k:'today',l:'Aujourd\'hui'},
-    {k:'7d',l:'7 jours'},
-    {k:'15d',l:'15 jours'},
-    {k:'30d',l:'30 jours'},
-    {k:'all',l:'Depuis toujours'}
-  ];
-  if(!window.RECO_PERIOD)window.RECO_PERIOD='7d';
-
-  var h='<div class="filters" style="flex-wrap:wrap;gap:8px;align-items:center">';
-  periods.forEach(function(p){
-    var active=(window.RECO_PERIOD===p.k);
-    h+='<button class="btn-sm '+(active?'':'btn-off')+'" onclick="setRecoPeriod(\''+p.k+'\')">'+p.l+'</button>';
-  });
-  h+='<button class="btn-sm '+(window.RECO_PERIOD==='custom'?'':'btn-off')+'" onclick="setRecoPeriod(\'custom\')">Custom</button>';
-  h+='<div id="recoCustomDates" style="display:'+(window.RECO_PERIOD==='custom'?'flex':'none')+';gap:8px;align-items:center"><input type="date" id="recoFrom" value="'+dDate(7)+'"><span style="color:var(--text3)">a</span><input type="date" id="recoTo" value="'+dDate(0)+'"><button class="btn-sm" onclick="loadRecoData()">Charger</button></div>';
+  var h=periodButtonsHtml('loadRecoData');
+  // Strip the trailing </div> from periodButtonsHtml so we can append more controls
+  h=h.replace(/<\/div>$/,'');
   h+='<select id="recoVaSel" onchange="RECO_VA=this.value;renderReco()" style="padding:8px 12px;border-radius:8px;background:var(--bg3);color:var(--text1);border:1px solid var(--border);min-width:140px"><option value="all">Tous VA</option></select>';
   h+='<input type="text" id="recoSearch" placeholder="Rechercher VA ou caption..." oninput="renderRecoTier()" style="flex:1;min-width:180px;padding:8px 12px;border-radius:8px;background:var(--bg3);color:var(--text1);border:1px solid var(--border)">';
   h+='</div><div id="recoArea"></div>';
@@ -951,27 +1056,22 @@ function loadReco(){
   loadRecoData();
 }
 
-// Click on a period button: activate it, refresh the page (which re-renders the buttons too).
-function setRecoPeriod(p){
-  window.RECO_PERIOD=p;
-  if(p==='custom'){
-    // Just toggle the visibility of date inputs without re-fetching
-    loadReco();
-    return;
-  }
-  loadReco();
-}
-
-// Build the API URL according to the selected period filter.
+// Build the API URL using the global period state.
 function buildRecoUrl(){
-  var sel=window.RECO_PERIOD||'7d';
-  if(sel==='custom'){
-    var from=(document.getElementById('recoFrom')||{}).value;
-    var to=(document.getElementById('recoTo')||{}).value;
-    if(!from||!to)return '/api/recommendations?period=7d';
+  var p=getGlobalPeriod();
+  if(p==='custom'){
+    var from=getGlobalDateFrom(),to=getGlobalDateTo();
     return '/api/recommendations?from='+encodeURIComponent(from)+'&to='+encodeURIComponent(to);
   }
-  return '/api/recommendations?period='+sel;
+  if(p==='today')return '/api/recommendations?period=today';
+  if(p==='yesterday'){
+    // 'yesterday' is a single day → use a custom from/to range
+    var d=dDate(-1);
+    return '/api/recommendations?from='+encodeURIComponent(d)+'&to='+encodeURIComponent(d);
+  }
+  if(p==='all')return '/api/recommendations?period=all';
+  // 7, 15, 30 → numeric N → API expects '7d', '15d', '30d'
+  return '/api/recommendations?period='+p+'d';
 }
 
 function loadRecoData(){
@@ -1120,31 +1220,33 @@ function renderRecoTier(){
 // ==================== HEURES ====================
 function loadHeat(){
   destroyCharts();
-  if(!window.HEAT_PERIOD)window.HEAT_PERIOD='7';
-  var periods=[
-    {k:'3',l:'3 jours'},
-    {k:'7',l:'7 jours'},
-    {k:'15',l:'15 jours'},
-    {k:'30',l:'30 jours'},
-    {k:'90',l:'90 jours'},
-    {k:'all',l:'Depuis toujours'}
-  ];
-  var h='<div class="filters" style="flex-wrap:wrap;gap:8px;align-items:center">';
-  periods.forEach(function(p){
-    var active=(window.HEAT_PERIOD===p.k);
-    h+='<button class="btn-sm '+(active?'':'btn-off')+'" onclick="setHeatPeriod(\''+p.k+'\')">'+p.l+'</button>';
-  });
+  // Heures uses the unified period state, but additionally offers a "90 jours"
+  // button because heatmaps benefit from larger windows.
+  var h=periodButtonsHtml('loadHeatData');
+  // Strip closing </div> to insert one extra button before
+  h=h.replace(/<\/div>$/,'');
+  // Add a 90-day shortcut (specific to Heures, doesn't exist on other pages)
+  var p=getGlobalPeriod();
+  h+='<button class="btn-sm '+(p==='90'?'':'btn-off')+'" onclick="changeGlobalPeriod(\'90\',\'loadHeatData\')">90 jours</button>';
   h+='</div><div id="heatArea"></div>';
   document.getElementById('content').innerHTML=h;
   loadHeatData();
 }
 
-function setHeatPeriod(p){
-  window.HEAT_PERIOD=p;
-  loadHeat();
-}
-
-function loadHeatData(){destroyCharts();var days=window.HEAT_PERIOD||'7';af('/api/heatmap?days='+days).then(function(d){var hrs=d.hours;var maxV=Math.max.apply(null,hrs.map(function(h){return h.avg_views}).concat([1]));
+function loadHeatData(){
+  destroyCharts();
+  // Convert the global period into the "days" parameter expected by /api/heatmap.
+  // 'today' → 1, 'yesterday' → 1, '7'/'15'/'30'/'90' → as is, 'all' → 'all',
+  // 'custom' → number of days in the range.
+  var p=getGlobalPeriod();
+  var days;
+  if(p==='today'||p==='yesterday')days='1';
+  else if(p==='all')days='all';
+  else if(p==='custom'){
+    var from=getGlobalDateFrom(),to=getGlobalDateTo();
+    days=String(Math.max(1,Math.round((new Date(to)-new Date(from))/86400000)+1));
+  } else days=p; // numeric string '7','15','30','90'
+  af('/api/heatmap?days='+days).then(function(d){var hrs=d.hours;var maxV=Math.max.apply(null,hrs.map(function(h){return h.avg_views}).concat([1]));
 var totalPosts=Number(d.totalPosts||0);
 var periodLabel=(days==='all')?'Depuis toujours':days+' derniers jours';
 var h='<div class="sec-title">'+platEmoji()+' Heatmap — '+periodLabel+' — '+platLabel()+'</div>';
