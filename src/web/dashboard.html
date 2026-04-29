@@ -10,6 +10,9 @@
 <title>Shinra Tracker</title>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<!-- Chart.js zoom plugin: enables wheel zoom, pinch zoom and drag pan on charts.
+     Must be loaded AFTER chart.umd.min.js. v2.x is compatible with Chart.js v4. -->
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{--bg:#06060b;--bg2:#0d0d16;--bg3:#14142a;--bg4:#1c1c38;--pink:#e1306c;--purple:#7c3aed;--blue:#3b82f6;--twitter:#1da1f2;--green:#10b981;--orange:#f59e0b;--red:#ef4444;--viral:#ff00ff;--text:#f1f5f9;--text2:#94a3b8;--text3:#64748b;--border:rgba(255,255,255,0.07);--glow:rgba(124,58,237,0.08);--accent:var(--pink);--accent2:var(--purple);--radius:16px;--radius-sm:10px}
@@ -218,6 +221,38 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(-
 /* Section title */
 .sec-title{font-size:11px;color:var(--text3);font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:16px;display:flex;align-items:center;gap:8px}
 .sec-title::after{content:'';flex:1;height:1px;background:var(--border)}
+/* === LIGHT THEME ===
+   Activated by adding class "theme-light" on <body>.
+   Overrides the dark variables defined in :root above. We keep brand colors
+   (pink/purple/etc) because they remain readable on white. We mostly remap
+   backgrounds, text and borders so the layout doesn't have to change. */
+body.theme-light{
+  --bg:#f5f6fa;
+  --bg2:#ffffff;
+  --bg3:#f0f1f5;
+  --bg4:#e6e8ed;
+  --text:#0f172a;
+  --text2:#475569;
+  --text3:#94a3b8;
+  --border:rgba(15,23,42,0.08);
+  --glow:rgba(124,58,237,0.05);
+  background:var(--bg);
+  color:var(--text);
+}
+body.theme-light .topbar{background:var(--bg2);border-bottom:1px solid var(--border)}
+body.theme-light .nav{background:var(--bg2);border-bottom:1px solid var(--border)}
+body.theme-light .login-card{background:#fff;border:1px solid var(--border);box-shadow:0 12px 40px rgba(0,0,0,0.08)}
+body.theme-light .modal{background:#fff;border:1px solid var(--border);box-shadow:0 20px 60px rgba(0,0,0,0.15)}
+body.theme-light .kpi{background:#fff;box-shadow:0 1px 3px rgba(0,0,0,0.04)}
+body.theme-light .kpi:hover{box-shadow:0 8px 24px rgba(0,0,0,0.08)}
+body.theme-light .card{background:#fff;box-shadow:0 1px 3px rgba(0,0,0,0.04)}
+body.theme-light .tbl thead th{background:var(--bg3);color:var(--text2)}
+body.theme-light .tbl tr:hover{background:var(--bg3)}
+body.theme-light .post-card{background:var(--bg3)}
+body.theme-light input,body.theme-light select,body.theme-light textarea{background:#fff;color:var(--text);border-color:var(--border)}
+body.theme-light .btn-off{background:var(--bg3);color:var(--text);border:1px solid var(--border)}
+body.theme-light .btn-off:hover{background:#fff}
+body.theme-light #themeBtn{background:#fff;border:1px solid var(--border)}
 </style>
 </head>
 <body>
@@ -237,6 +272,7 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(-
 <div class="plat-switch" id="platSwitch"></div>
 <span class="user" id="curUser"></span>
 <button id="adminBtn" style="display:none;padding:6px 14px;background:var(--bg3);color:var(--text2);border:1px solid var(--border);border-radius:20px;cursor:pointer;font-size:12px;transition:all 0.2s" onclick="openAdmin()">⚙️</button>
+<button id="themeBtn" title="Basculer mode clair/sombre" style="padding:6px 12px;background:var(--bg3);color:var(--text2);border:1px solid var(--border);border-radius:20px;cursor:pointer;font-size:14px;transition:all 0.2s" onclick="toggleTheme()">🌙</button>
 <button class="logout" onclick="doLogout()">Deconnexion</button>
 </div>
 </div>
@@ -286,6 +322,43 @@ if(t==='dash')loadDash();else if(t==='lb')loadLB();else if(t==='reco')loadReco()
 
 // Helpers
 function fm(n){return n==null?'0':Number(n).toLocaleString('fr-FR')}
+
+// === THEME (dark / light) ===
+// We persist the user's preference in localStorage so it survives reloads.
+// The body classlist is the single source of truth ("theme-light" class).
+function applyTheme(theme){
+  if(theme==='light'){
+    document.body.classList.add('theme-light');
+    var btn=document.getElementById('themeBtn');
+    if(btn)btn.textContent='☀️';
+  } else {
+    document.body.classList.remove('theme-light');
+    var btn2=document.getElementById('themeBtn');
+    if(btn2)btn2.textContent='🌙';
+  }
+}
+function toggleTheme(){
+  var current=localStorage.getItem('theme')||'dark';
+  var next=current==='dark'?'light':'dark';
+  localStorage.setItem('theme',next);
+  applyTheme(next);
+  // Re-render the current tab so charts redraw with the new background tone.
+  // We re-trigger the active nav item's click to invoke its loader.
+  var active=document.querySelector('.nav-item.on');
+  if(active){
+    var tabName=active.getAttribute('data-tab')||'dash';
+    if(typeof go==='function')go(tabName,active);
+  }
+}
+// Apply theme as early as possible to avoid flash-of-dark on a light reload
+(function(){
+  var saved=localStorage.getItem('theme');
+  if(saved==='light'){
+    // Wait for body to exist if script runs in <head>
+    if(document.body)applyTheme('light');
+    else document.addEventListener('DOMContentLoaded',function(){applyTheme('light');});
+  }
+})();
 function platEmoji(){return PLAT==='twitter'?'🐦':PLAT==='all'?'📊':PLAT==='geelark'?'📱':PLAT==='threads'?'🧵':'📸'}
 function platLabel(){return PLAT==='twitter'?'Twitter':PLAT==='all'?'Global':PLAT==='geelark'?'Geelark Insta':PLAT==='threads'?'Threads':'Instagram'}
 function platLinkLabel(p){p=p||PLAT;return p==='twitter'?'Twitter ↗':'Instagram ↗'}
@@ -299,7 +372,75 @@ function kpi(icon,val,lbl,sub,color){var colors={pink:'var(--accent)',blue:'var(
 function gauge(pct){var r=48,c=2*Math.PI*r,off=c-(pct/100)*c;var col=pct>=80?'var(--green)':pct>=50?'var(--orange)':'var(--red)';return'<div class="gauge-wrap"><div class="gauge"><svg width="110" height="110"><circle cx="55" cy="55" r="'+r+'" fill="none" stroke="var(--bg3)" stroke-width="8"/><circle cx="55" cy="55" r="'+r+'" fill="none" stroke="'+col+'" stroke-width="8" stroke-dasharray="'+c+'" stroke-dashoffset="'+off+'" stroke-linecap="round"/></svg><div class="gauge-text"><div class="pct" style="color:'+col+'">'+pct+'%</div><div class="gsub">objectif</div></div></div></div>'}
 function dDate(offset){var d=new Date();d.setDate(d.getDate()+offset);return d.toISOString().split('T')[0]}
 function destroyCharts(){(window._charts||[]).forEach(function(c){try{c.destroy()}catch(e){}});window._charts=[]}
-function makeChart(id,cfg){var ctx=document.getElementById(id);if(!ctx)return null;var ch=new Chart(ctx,cfg);window._charts=window._charts||[];window._charts.push(ch);return ch}
+
+// Build a Chart.js chart with sensible defaults applied on top of the caller's config.
+// We add:
+//   - Detailed tooltips: shows value formatted in fr-FR + percentage of max (for bar/line).
+//   - Zoom via mouse wheel (Ctrl+wheel zooms, just-wheel pans on x-axis).
+//   - Zoom-out button shown on the chart's container.
+// The caller's options take precedence (deep-merged), so existing per-chart styling
+// (colors, axis labels, legend toggles) remains intact.
+function makeChart(id,cfg){
+  var ctx=document.getElementById(id);if(!ctx)return null;
+
+  // Deep-merge default plugins.tooltip + plugins.zoom into the caller's options
+  cfg.options=cfg.options||{};
+  cfg.options.plugins=cfg.options.plugins||{};
+
+  // Tooltip defaults — detailed callbacks that format numbers in fr-FR and add context
+  if(!cfg.options.plugins.tooltip){
+    cfg.options.plugins.tooltip={
+      backgroundColor:'rgba(15,23,42,0.95)',
+      titleColor:'#fff',
+      bodyColor:'#fff',
+      titleFont:{size:13,weight:'700'},
+      bodyFont:{size:12},
+      padding:12,
+      cornerRadius:8,
+      displayColors:true,
+      boxPadding:6,
+      callbacks:{
+        // Format the value in French locale (e.g. "12 543" instead of "12543")
+        label:function(context){
+          var label=context.dataset.label||'';
+          var raw=context.parsed.y!=null?context.parsed.y:context.parsed;
+          var formatted=Number(raw).toLocaleString('fr-FR');
+          return label?(label+': '+formatted):formatted;
+        },
+      },
+    };
+  }
+
+  // Zoom plugin (only enabled if the lib is loaded — degrades gracefully)
+  if(window.Chart && Chart.registry && Chart.registry.plugins && !cfg.options.plugins.zoom){
+    cfg.options.plugins.zoom={
+      pan:{
+        enabled:true,
+        mode:'x',
+        modifierKey:null, // pan with plain drag
+      },
+      zoom:{
+        wheel:{
+          enabled:true,
+          modifierKey:'ctrl', // Ctrl+wheel to zoom (so plain wheel still scrolls the page)
+        },
+        pinch:{enabled:true},
+        mode:'x',
+      },
+    };
+  }
+
+  // Hover hints — slightly larger points on hover for line charts
+  if(cfg.type==='line'){
+    cfg.options.interaction=cfg.options.interaction||{mode:'index',intersect:false};
+    cfg.options.hover=cfg.options.hover||{mode:'nearest',intersect:false};
+  }
+
+  var ch=new Chart(ctx,cfg);
+  window._charts=window._charts||[];
+  window._charts.push(ch);
+  return ch;
+}
 
 // ==================== DASHBOARD ====================
 var DASH_MODE='today';
