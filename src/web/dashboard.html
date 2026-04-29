@@ -691,7 +691,23 @@ function engOf(s){var v=Number(s.views)||0;if(!v)return 0;return((Number(s.likes
 function perfOf(v){if(v>=5000)return'viral';if(v>=1000)return'bon';if(v>=300)return'moyen';return'flop'}
 function kpi(icon,val,lbl,sub,color){var colors={pink:'var(--accent)',blue:'var(--blue)',purple:'var(--purple)',green:'var(--green)',orange:'var(--orange)',red:'var(--red)'};var c=colors[color]||'var(--accent)';return'<div class="kpi"><div class="icon">'+icon+'</div><div class="val" style="color:'+c+'">'+val+'</div><div class="lbl">'+lbl+'</div>'+(sub?'<div class="sub">'+sub+'</div>':'')+'<div style="position:absolute;top:-30px;right:-30px;width:90px;height:90px;border-radius:50%;background:'+c+';opacity:0.05"></div></div>'}
 function gauge(pct){var r=48,c=2*Math.PI*r,off=c-(pct/100)*c;var col=pct>=80?'var(--green)':pct>=50?'var(--orange)':'var(--red)';return'<div class="gauge-wrap"><div class="gauge"><svg width="110" height="110"><circle cx="55" cy="55" r="'+r+'" fill="none" stroke="var(--bg3)" stroke-width="8"/><circle cx="55" cy="55" r="'+r+'" fill="none" stroke="'+col+'" stroke-width="8" stroke-dasharray="'+c+'" stroke-dashoffset="'+off+'" stroke-linecap="round"/></svg><div class="gauge-text"><div class="pct" style="color:'+col+'">'+pct+'%</div><div class="gsub">objectif</div></div></div></div>'}
-function dDate(offset){var d=new Date();d.setDate(d.getDate()+offset);return d.toISOString().split('T')[0]}
+// Get a YYYY-MM-DD date string offset from "today", computed in Africa/Porto-Novo TZ.
+// We use the Bénin timezone because that's the reference for the working day —
+// posts created at 00:30 Bénin time are still "today" for the team, even though
+// they're "yesterday" in UTC. Backend SQL also uses this TZ for date filtering.
+function dDate(offset){
+  var d=new Date();
+  d.setDate(d.getDate()+(offset||0));
+  // Format in Africa/Porto-Novo timezone using the locale-aware formatter
+  var parts=new Intl.DateTimeFormat('fr-CA',{
+    timeZone:'Africa/Porto-Novo',
+    year:'numeric',month:'2-digit',day:'2-digit'
+  }).formatToParts(d);
+  var y=parts.find(function(p){return p.type==='year'}).value;
+  var m=parts.find(function(p){return p.type==='month'}).value;
+  var day=parts.find(function(p){return p.type==='day'}).value;
+  return y+'-'+m+'-'+day;
+}
 function destroyCharts(){(window._charts||[]).forEach(function(c){try{c.destroy()}catch(e){}});window._charts=[]}
 
 // Build a Chart.js chart with sensible defaults applied on top of the caller's config.
