@@ -1226,6 +1226,75 @@ function createWebServer() {
     } catch(err) { res.status(500).json({ error: err.message }); }
   });
 
+  // === DIAGNOSTIC: why are today's stats empty? ===
+  // Returns a snapshot of today's data straight from the source tables, bypassing
+  // daily_summaries. Use this to figure out where the data goes missing.
+  app.get('/api/admin/diag-today', checkAuth, checkAdmin, async function(req, res) {
+    try {
+      var platform = req.query.platform || 'instagram';
+      var pool = db.pool;
+      // Get today's date in the team's TZ
+      var todayResult = await pool.query("SELECT (NOW() AT TIME ZONE 'Africa/Porto-Novo')::date AS today, NOW() AT TIME ZONE 'Africa/Porto-Novo' AS now_benin");
+      var today = todayResult.rows[0].today.toISOString().split('T')[0];
+
+      // 1. Count today's posts (in Benin TZ)
+      var postsToday = await pool.query(
+        "SELECT COUNT(*)::int AS total, " +
+        "       COUNT(va_discord_id)::int AS with_va_id, " +
+        "       COUNT(*) FILTER (WHERE va_discord_id IS NULL)::int AS missing_va_id " +
+        "FROM posts " +
+        "WHERE (created_at AT TIME ZONE 'Africa/Porto-Novo')::date = $1 " +
+        "  AND deleted_at IS NULL " +
+        "  AND platform = $2",
+        [today, platform]
+      );
+
+      // 2. Sum the latest views from snapshots for today's posts
+      var liveTotals = await pool.query(
+        "SELECT COUNT(DISTINCT p.id)::int AS posts_with_data, " +
+        "       COALESCE(SUM(latest.views), 0)::bigint AS total_views, " +
+        "       COALESCE(SUM(latest.likes), 0)::bigint AS total_likes, " +
+        "       MAX(latest.scraped_at) AS last_scrape " +
+        "FROM posts p " +
+        "LEFT JOIN LATERAL (SELECT views, likes, scraped_at FROM snapshots s WHERE s.post_id = p.id ORDER BY s.scraped_at DESC LIMIT 1) latest ON true " +
+        "WHERE (p.created_at AT TIME ZONE 'Africa/Porto-Novo')::date = $1 " +
+        "  AND p.deleted_at IS NULL " +
+        "  AND p.platform = $2",
+        [today, platform]
+      );
+
+      // 3. What's currently in daily_summaries for today
+      var summaryRow = await pool.query(
+        "SELECT COUNT(*)::int AS rows, COALESCE(SUM(total_views),0)::bigint AS sum_views, " +
+        "       COALESCE(SUM(total_likes),0)::bigint AS sum_likes, COALESCE(SUM(post_count),0)::int AS sum_posts " +
+        "FROM daily_summaries WHERE date = $1 AND platform = $2",
+        [today, platform]
+      );
+
+      // 4. Sample 5 posts from today to inspect manually
+      var samplePosts = await pool.query(
+        "SELECT p.id, p.url, p.va_name, p.va_discord_id, p.account_username, p.created_at, " +
+        "       latest.views, latest.likes, latest.scraped_at " +
+        "FROM posts p " +
+        "LEFT JOIN LATERAL (SELECT views, likes, scraped_at FROM snapshots s WHERE s.post_id = p.id ORDER BY s.scraped_at DESC LIMIT 1) latest ON true " +
+        "WHERE (p.created_at AT TIME ZONE 'Africa/Porto-Novo')::date = $1 " +
+        "  AND p.deleted_at IS NULL AND p.platform = $2 " +
+        "ORDER BY p.created_at DESC LIMIT 5",
+        [today, platform]
+      );
+
+      res.json({
+        platform: platform,
+        today_benin: today,
+        now_benin: todayResult.rows[0].now_benin,
+        posts_today: postsToday.rows[0],
+        live_totals_from_snapshots: liveTotals.rows[0],
+        currently_in_daily_summaries: summaryRow.rows[0],
+        sample_posts: samplePosts.rows,
+      });
+    } catch(err) { res.status(500).json({ error: err.message, stack: err.stack }); }
+  });
+
   // === In-app notifications (bell icon) ===
   // List recent notifications, optionally filtered by platform.
   app.get('/api/notifications', checkAuth, async function(req, res) {
