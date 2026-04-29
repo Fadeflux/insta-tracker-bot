@@ -1616,8 +1616,10 @@ h+='<div style="display:flex;gap:10px;flex-wrap:wrap">';
 h+='<button class="btn-sm btn-off" onclick="runForceDuels()" style="padding:9px 14px;font-size:12px;font-weight:700">🎮 Forcer duels + champion</button>';
 h+='<button class="btn-sm btn-off" onclick="runForceSummary()" style="padding:9px 14px;font-size:12px;font-weight:700">📊 Forcer resume du jour</button>';
 h+='<button class="btn-sm btn-off" onclick="runSweep()" style="padding:9px 14px;font-size:12px;font-weight:700">🔄 Sweep Discord</button>';
+h+='<button class="btn-sm btn-off" onclick="runDiagToday()" style="padding:9px 14px;font-size:12px;font-weight:700">🔍 Diagnostic vues du jour</button>';
 h+='</div>';
 h+='<div id="adm_action_msg" style="margin-top:10px;font-size:11px;min-height:14px"></div>';
+h+='<div id="adm_diag_result" style="margin-top:14px;font-family:monospace;font-size:11px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:0;display:none;max-height:500px;overflow:auto"></div>';
 h+='</div>';
 }
 
@@ -1758,6 +1760,60 @@ fetch(A+'/api/admin/sweep-users',{method:'POST',headers:{'X-Auth-Token':T}}).the
 btn.textContent=oldText;btn.disabled=false;
 if(d.success){setAdmActionMsg('✓ Sweep termine. '+(d.message||''),'var(--green)');loadUserList();loadRevokedList()}
 else{setAdmActionMsg('✗ '+(d.error||'Erreur lors du sweep'),'var(--red)')}}).catch(function(e){btn.textContent=oldText;btn.disabled=false;setAdmActionMsg('✗ '+e.message,'var(--red)')})}
+
+// === DIAGNOSTIC: today's stats sanity check ===
+// Calls /api/admin/diag-today and renders a human-readable comparison between
+// "what the snapshots say" and "what the dashboard shows", per platform. Useful
+// to figure out where the data goes missing when the dashboard shows 0/2 views.
+function runDiagToday(){
+  var btn=event.target;var oldText=btn.textContent;btn.textContent='⏳ Analyse...';btn.disabled=true;
+  var resultBox=document.getElementById('adm_diag_result');
+  resultBox.style.display='block';
+  resultBox.innerHTML='<div style="padding:14px;color:var(--text3)">Analyse en cours...</div>';
+
+  // Run the diagnostic for all 4 platforms in parallel
+  var plats=['instagram','twitter','geelark','threads'];
+  Promise.all(plats.map(function(p){
+    return fetch(A+'/api/admin/diag-today?platform='+p,{headers:{'X-Auth-Token':T}})
+      .then(function(r){return r.json()}).catch(function(e){return{platform:p,error:e.message}});
+  })).then(function(results){
+    btn.textContent=oldText;btn.disabled=false;
+    var html='<div style="padding:14px">';
+    html+='<div style="font-size:13px;font-weight:700;margin-bottom:10px;color:var(--text)">📊 Diagnostic des vues du jour</div>';
+    results.forEach(function(d){
+      var emo=d.platform==='twitter'?'🐦':d.platform==='geelark'?'📱':d.platform==='threads'?'🧵':'📸';
+      html+='<div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:10px">';
+      html+='<div style="font-weight:700;font-size:12px;margin-bottom:8px;color:var(--text)">'+emo+' '+d.platform.toUpperCase()+'</div>';
+      if(d.error){
+        html+='<div style="color:var(--red);font-size:11px">Erreur: '+escapeHtml(d.error)+'</div>';
+      } else {
+        var live=d.live_totals_from_snapshots||{};
+        var summary=d.currently_in_daily_summaries||{};
+        var posts=d.posts_today||{};
+        // Compare snapshots vs daily_summaries
+        var liveViews=Number(live.total_views||0);
+        var summaryViews=Number(summary.sum_views||0);
+        var divergence=(liveViews>100&&summaryViews<10)?'⚠️ DIVERGENCE':(liveViews===summaryViews?'✓ OK':'≈ proche');
+        html+='<table style="width:100%;font-size:11px;color:var(--text2)">';
+        html+='<tr><td style="padding:3px 0">Date Bénin</td><td style="text-align:right">'+escapeHtml(d.today_benin||'?')+'</td></tr>';
+        html+='<tr><td style="padding:3px 0">Posts créés aujourd\'hui</td><td style="text-align:right">'+(posts.total||0)+(posts.missing_va_id>0?' ('+posts.missing_va_id+' sans VA)':'')+'</td></tr>';
+        html+='<tr><td style="padding:3px 0">Posts avec snapshot</td><td style="text-align:right">'+(live.posts_with_data||0)+'</td></tr>';
+        html+='<tr><td style="padding:3px 0;color:var(--green)">VRAI total vues (snapshots)</td><td style="text-align:right;color:var(--green);font-weight:700">'+fm(liveViews)+'</td></tr>';
+        html+='<tr><td style="padding:3px 0;color:var(--orange)">Total vues affiché (daily_summaries)</td><td style="text-align:right;color:var(--orange);font-weight:700">'+fm(summaryViews)+'</td></tr>';
+        html+='<tr><td style="padding:3px 0">Cohérence</td><td style="text-align:right;font-weight:700">'+divergence+'</td></tr>';
+        html+='<tr><td style="padding:3px 0">Dernier scrape</td><td style="text-align:right">'+(live.last_scrape?new Date(live.last_scrape).toLocaleString('fr-FR'):'aucun')+'</td></tr>';
+        html+='</table>';
+      }
+      html+='</div>';
+    });
+    html+='<div style="font-size:10px;color:var(--text3);margin-top:8px">Si "VRAI total" >> "Total affiché" → bug de mise à jour de daily_summaries.<br>Si "VRAI total" = 0 → scraping cassé pour cette plateforme.</div>';
+    html+='</div>';
+    resultBox.innerHTML=html;
+  }).catch(function(e){
+    btn.textContent=oldText;btn.disabled=false;
+    resultBox.innerHTML='<div style="padding:14px;color:var(--red)">Erreur: '+escapeHtml(e.message)+'</div>';
+  });
+}
 
 function runForceDuels(){
 var plat=document.getElementById('adm_action_plat').value;
