@@ -267,12 +267,19 @@ body.theme-light #themeBtn{background:#fff;border:1px solid var(--border)}
 </div>
 <div class="app" id="app">
 <!-- Notifications panel — slides down from the bell button. Hidden by default. -->
-<div id="notifPanel" style="display:none;position:fixed;top:60px;right:20px;width:380px;max-height:70vh;background:var(--bg2);border:1px solid var(--border);border-radius:16px;box-shadow:0 16px 60px rgba(0,0,0,0.5);z-index:1000;overflow:hidden;display:none">
+<div id="notifPanel" style="display:none;position:fixed;top:60px;right:20px;width:420px;max-height:75vh;background:var(--bg2);border:1px solid var(--border);border-radius:16px;box-shadow:0 16px 60px rgba(0,0,0,0.5);z-index:1000;overflow:hidden;display:none">
   <div style="padding:14px 18px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
     <div style="font-weight:700;font-size:14px">🔔 Notifications</div>
     <button onclick="markAllNotifsRead()" style="background:transparent;border:none;color:var(--text3);cursor:pointer;font-size:11px">Tout marquer lu</button>
   </div>
-  <div id="notifList" style="overflow-y:auto;max-height:60vh"></div>
+  <!-- Category filter tabs. Each one filters the list below by its 'kind' value. -->
+  <div id="notifTabs" style="display:flex;gap:4px;padding:8px 12px;border-bottom:1px solid var(--border);overflow-x:auto;background:var(--bg3)">
+    <button class="notif-tab active" data-kind="all" onclick="setNotifTab('all')" style="background:var(--accent);color:#fff;border:none;border-radius:6px;padding:6px 10px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap">Tout <span class="notif-tab-count" data-kind="all"></span></button>
+    <button class="notif-tab" data-kind="viral_confirmed" onclick="setNotifTab('viral_confirmed')" style="background:transparent;color:var(--text2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap">🔥 Viral <span class="notif-tab-count" data-kind="viral_confirmed"></span></button>
+    <button class="notif-tab" data-kind="fast_growth" onclick="setNotifTab('fast_growth')" style="background:transparent;color:var(--text2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap">🚀 Croissance <span class="notif-tab-count" data-kind="fast_growth"></span></button>
+    <button class="notif-tab" data-kind="shadowban_suspected" onclick="setNotifTab('shadowban_suspected')" style="background:transparent;color:var(--text2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:11px;font-weight:600;cursor:pointer;white-space:nowrap">🚫 Shadowban <span class="notif-tab-count" data-kind="shadowban_suspected"></span></button>
+  </div>
+  <div id="notifList" style="overflow-y:auto;max-height:55vh"></div>
 </div>
 <div class="topbar">
 <div class="brand" id="brandTitle">Shinra Tracker</div>
@@ -337,8 +344,11 @@ function fm(n){return n==null?'0':Number(n).toLocaleString('fr-FR')}
 // bell opens a panel that lists recent notifications for the current platform.
 // Notifications are filtered server-side by the user's platform context, so
 // switching platform automatically scopes the bell to that platform.
+// The panel has category tabs (All / Viral / Growth / Shadowban) so the user
+// can focus on one type at a time.
 var NOTIF_PANEL_OPEN = false;
 var NOTIF_LIST_CACHE = [];
+var NOTIF_ACTIVE_TAB = 'all'; // 'all' | 'viral_confirmed' | 'fast_growth' | 'shadowban_suspected'
 
 function refreshNotifBadge(){
   if(typeof af!=='function')return;
@@ -358,31 +368,76 @@ function loadNotifList(){
   var list=document.getElementById('notifList');
   if(!list)return;
   list.innerHTML='<div style="padding:30px;text-align:center;color:var(--text3);font-size:12px">Chargement...</div>';
-  af('/api/notifications?limit=30').then(function(d){
+  af('/api/notifications?limit=50').then(function(d){
     NOTIF_LIST_CACHE=d.notifications||[];
-    if(NOTIF_LIST_CACHE.length===0){
-      list.innerHTML='<div style="padding:40px 20px;text-align:center;color:var(--text3);font-size:12px">Aucune notification pour le moment.</div>';
-      return;
-    }
-    var h='';
-    NOTIF_LIST_CACHE.forEach(function(n){
-      var dt=new Date(n.created_at);
-      var when=relativeTime(dt);
-      var icon=n.kind==='viral_confirmed'?'🔥':n.kind==='fast_growth'?'🚀':n.kind==='shadowban_suspected'?'🚫':'🔔';
-      var color=n.kind==='viral_confirmed'?'var(--viral)':n.kind==='fast_growth'?'var(--orange)':n.kind==='shadowban_suspected'?'var(--red)':'var(--accent)';
-      var link=n.url?('<a href="'+n.url+'" target="_blank" style="color:var(--accent);font-size:10px;text-decoration:none">Voir →</a>'):'';
-      h+='<div style="padding:12px 18px;border-bottom:1px solid var(--border);display:flex;gap:10px;align-items:flex-start">';
-      h+='<div style="font-size:18px;color:'+color+'">'+icon+'</div>';
-      h+='<div style="flex:1;min-width:0">';
-      h+='<div style="font-weight:700;font-size:12px;margin-bottom:2px">'+escapeHtml(n.title||'')+'</div>';
-      h+='<div style="font-size:11px;color:var(--text2);line-height:1.4">'+escapeHtml(n.body||'')+'</div>';
-      h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px"><span style="font-size:9px;color:var(--text3);text-transform:uppercase">'+when+' · '+escapeHtml(n.platform||'')+'</span>'+link+'</div>';
-      h+='</div></div>';
-    });
-    list.innerHTML=h;
+    updateNotifTabCounts();
+    renderNotifList();
   }).catch(function(e){
     list.innerHTML='<div style="padding:30px;text-align:center;color:var(--red);font-size:12px">Erreur: '+(e.message||'?')+'</div>';
   });
+}
+
+// Update the small (X) counters on each tab so user sees how many notifs in each category.
+function updateNotifTabCounts(){
+  var counts={all:NOTIF_LIST_CACHE.length,viral_confirmed:0,fast_growth:0,shadowban_suspected:0};
+  NOTIF_LIST_CACHE.forEach(function(n){
+    if(counts[n.kind]!==undefined)counts[n.kind]++;
+  });
+  document.querySelectorAll('.notif-tab-count').forEach(function(el){
+    var kind=el.getAttribute('data-kind');
+    var c=counts[kind]||0;
+    el.textContent=c>0?('('+c+')'):'';
+    el.style.opacity=c>0?'0.85':'0';
+  });
+}
+
+// Switch active tab and re-render filtered list.
+function setNotifTab(kind){
+  NOTIF_ACTIVE_TAB=kind;
+  // Update visual state of tab buttons
+  document.querySelectorAll('.notif-tab').forEach(function(b){
+    var isActive=b.getAttribute('data-kind')===kind;
+    if(isActive){
+      b.style.background='var(--accent)';
+      b.style.color='#fff';
+      b.style.border='none';
+    } else {
+      b.style.background='transparent';
+      b.style.color='var(--text2)';
+      b.style.border='1px solid var(--border)';
+    }
+  });
+  renderNotifList();
+}
+
+function renderNotifList(){
+  var list=document.getElementById('notifList');
+  if(!list)return;
+  var filtered=NOTIF_LIST_CACHE;
+  if(NOTIF_ACTIVE_TAB!=='all'){
+    filtered=NOTIF_LIST_CACHE.filter(function(n){return n.kind===NOTIF_ACTIVE_TAB});
+  }
+  if(filtered.length===0){
+    var emptyMsg=NOTIF_ACTIVE_TAB==='all'?'Aucune notification pour le moment.':'Aucune notification de cette categorie.';
+    list.innerHTML='<div style="padding:40px 20px;text-align:center;color:var(--text3);font-size:12px">'+emptyMsg+'</div>';
+    return;
+  }
+  var h='';
+  filtered.forEach(function(n){
+    var dt=new Date(n.created_at);
+    var when=relativeTime(dt);
+    var icon=n.kind==='viral_confirmed'?'🔥':n.kind==='fast_growth'?'🚀':n.kind==='shadowban_suspected'?'🚫':'🔔';
+    var color=n.kind==='viral_confirmed'?'var(--viral)':n.kind==='fast_growth'?'var(--orange)':n.kind==='shadowban_suspected'?'var(--red)':'var(--accent)';
+    var link=n.url?('<a href="'+n.url+'" target="_blank" style="color:var(--accent);font-size:10px;text-decoration:none">Voir →</a>'):'';
+    h+='<div style="padding:12px 18px;border-bottom:1px solid var(--border);display:flex;gap:10px;align-items:flex-start">';
+    h+='<div style="font-size:18px;color:'+color+'">'+icon+'</div>';
+    h+='<div style="flex:1;min-width:0">';
+    h+='<div style="font-weight:700;font-size:12px;margin-bottom:2px">'+escapeHtml(n.title||'')+'</div>';
+    h+='<div style="font-size:11px;color:var(--text2);line-height:1.4">'+escapeHtml(n.body||'')+'</div>';
+    h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px"><span style="font-size:9px;color:var(--text3);text-transform:uppercase">'+when+' · '+escapeHtml(n.platform||'')+'</span>'+link+'</div>';
+    h+='</div></div>';
+  });
+  list.innerHTML=h;
 }
 
 function toggleNotifPanel(){
