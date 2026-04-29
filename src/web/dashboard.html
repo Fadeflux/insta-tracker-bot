@@ -368,8 +368,8 @@ function loadNotifList(){
     NOTIF_LIST_CACHE.forEach(function(n){
       var dt=new Date(n.created_at);
       var when=relativeTime(dt);
-      var icon=n.kind==='viral_confirmed'?'🔥':n.kind==='fast_growth'?'🚀':'🔔';
-      var color=n.kind==='viral_confirmed'?'var(--viral)':n.kind==='fast_growth'?'var(--orange)':'var(--accent)';
+      var icon=n.kind==='viral_confirmed'?'🔥':n.kind==='fast_growth'?'🚀':n.kind==='shadowban_suspected'?'🚫':'🔔';
+      var color=n.kind==='viral_confirmed'?'var(--viral)':n.kind==='fast_growth'?'var(--orange)':n.kind==='shadowban_suspected'?'var(--red)':'var(--accent)';
       var link=n.url?('<a href="'+n.url+'" target="_blank" style="color:var(--accent);font-size:10px;text-decoration:none">Voir →</a>'):'';
       h+='<div style="padding:12px 18px;border-bottom:1px solid var(--border);display:flex;gap:10px;align-items:flex-start">';
       h+='<div style="font-size:18px;color:'+color+'">'+icon+'</div>';
