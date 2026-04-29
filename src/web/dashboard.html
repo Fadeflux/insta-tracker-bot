@@ -161,8 +161,17 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(-
 .ok{color:var(--green);font-weight:700}.warn{color:var(--orange);font-weight:700}.bad{color:var(--red);font-weight:700}
 
 /* Charts */
+/* Default: medium-sized chart for most pages. */
 .chart-wrap{position:relative;height:280px;margin:12px 0}
 .chart-wrap canvas{width:100%!important}
+/* Tall: for charts with many bars (e.g. "Vues par VA" with 60+ VAs)
+   so each bar gets enough horizontal width. */
+.chart-wrap.tall{height:380px}
+/* Compact: for small inline charts in side-by-side grids
+   (e.g. multi-day evolution: 2x2 layout of small charts). */
+.chart-wrap.compact{height:220px}
+/* Small: for charts that share space with other visual elements like a leaderboard. */
+.chart-wrap.small{height:180px}
 
 /* Bars */
 .bars{display:flex;align-items:flex-end;gap:5px;height:200px;padding:8px 0}
@@ -678,6 +687,13 @@ function destroyCharts(){(window._charts||[]).forEach(function(c){try{c.destroy(
 function makeChart(id,cfg){
   var ctx=document.getElementById(id);if(!ctx)return null;
 
+  // Detect current theme (dark/light) so axis colors / grid lines remain visible
+  // on both. The user's theme is stored as a class on <body>.
+  var isLight=document.body.classList.contains('theme-light');
+  var axisColor=isLight?'#475569':'#94a3b8';        // text2-equivalent
+  var gridColor=isLight?'rgba(15,23,42,0.06)':'rgba(255,255,255,0.04)';
+  var tooltipBg=isLight?'rgba(15,23,42,0.92)':'rgba(15,23,42,0.95)';
+
   // Deep-merge default plugins.tooltip + plugins.zoom into the caller's options
   cfg.options=cfg.options||{};
   cfg.options.plugins=cfg.options.plugins||{};
@@ -685,7 +701,7 @@ function makeChart(id,cfg){
   // Tooltip defaults — detailed callbacks that format numbers in fr-FR and add context
   if(!cfg.options.plugins.tooltip){
     cfg.options.plugins.tooltip={
-      backgroundColor:'rgba(15,23,42,0.95)',
+      backgroundColor:tooltipBg,
       titleColor:'#fff',
       bodyColor:'#fff',
       titleFont:{size:13,weight:'700'},
@@ -704,6 +720,35 @@ function makeChart(id,cfg){
         },
       },
     };
+  }
+
+  // Auto-apply theme-aware colors to scales (grids and ticks). We only do this
+  // if the chart has scales defined and the caller hasn't explicitly set ticks
+  // colors — otherwise we'd override their styling.
+  if(cfg.options.scales){
+    Object.keys(cfg.options.scales).forEach(function(axisKey){
+      var axis=cfg.options.scales[axisKey];
+      if(!axis)return;
+      // Patch grid color
+      axis.grid=axis.grid||{};
+      // Only override if the caller used the previous hardcoded values (or didn't set anything)
+      var prevGrid=axis.grid.color;
+      if(!prevGrid||prevGrid==='rgba(255,255,255,0.04)'||prevGrid==='rgba(255,255,255,0.05)'){
+        axis.grid.color=gridColor;
+      }
+      // Patch tick color
+      axis.ticks=axis.ticks||{};
+      if(!axis.ticks.color||axis.ticks.color==='#64748b'||axis.ticks.color==='#94a3b8'){
+        axis.ticks.color=axisColor;
+      }
+    });
+  }
+  // Same for legend labels color
+  if(cfg.options.plugins.legend && cfg.options.plugins.legend.labels){
+    var prevLab=cfg.options.plugins.legend.labels.color;
+    if(!prevLab||prevLab==='#94a3b8'||prevLab==='#64748b'){
+      cfg.options.plugins.legend.labels.color=axisColor;
+    }
   }
 
   // Zoom plugin (only enabled if the lib is loaded — degrades gracefully)
@@ -788,7 +833,7 @@ h+=kpi('🏆',fm(tsc),'Score','','orange');
 h+=kpi('🎯',pct6+'%','Objectif 6p',obj6+'/'+s.length+' VA','green');
 h+='</div>';
 
-h+='<div class="card" style="margin-bottom:16px"><h3><span class="dot"></span>Vues par VA</h3><div class="chart-wrap"><canvas id="vaBarChart"></canvas></div></div>';
+h+='<div class="card" style="margin-bottom:16px"><h3><span class="dot"></span>Vues par VA</h3><div class="chart-wrap tall"><canvas id="vaBarChart"></canvas></div></div>';
 
 if(s.length>0){var best=s[0];h+='<div class="card" style="border-left:2px solid var(--green)"><div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:16px"><div><div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Meilleur VA</div><div style="font-size:20px;font-weight:800">'+best.va_name+' '+vaBadge(best.badge)+'</div><div style="color:var(--text3);font-size:12px;margin-top:4px">'+best.post_count+' posts · Score '+fm(best.total_score)+' · Eng. '+best.engagement_rate+'%</div></div><div style="display:flex;gap:20px"><div style="text-align:center"><div style="font-size:24px;font-weight:800;color:var(--purple)">'+fm(Number(best.total_views))+'</div><div style="font-size:9px;color:var(--text3);text-transform:uppercase">vues</div></div><div style="text-align:center"><div style="font-size:24px;font-weight:800;color:var(--accent)">'+fm(Number(best.total_likes))+'</div><div style="font-size:9px;color:var(--text3);text-transform:uppercase">likes</div></div></div></div></div>'}
 
@@ -866,15 +911,16 @@ h+=kpi('📆',''+days,'Jours','','blue');
 h+='</div>';
 // 4 graphes en grille 2x2
 h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">';
-h+='<div class="card"><h3><span class="dot"></span>Vues</h3><div class="chart-wrap"><canvas id="evoViews"></canvas></div></div>';
-h+='<div class="card"><h3><span class="dot"></span>Likes</h3><div class="chart-wrap"><canvas id="evoLikes"></canvas></div></div>';
-h+='<div class="card"><h3><span class="dot"></span>Engagement %</h3><div class="chart-wrap"><canvas id="evoEng"></canvas></div></div>';
-h+='<div class="card"><h3><span class="dot"></span>Posts / jour</h3><div class="chart-wrap"><canvas id="evoPosts"></canvas></div></div>';
+h+='<div class="card"><h3><span class="dot"></span>Vues</h3><div class="chart-wrap compact"><canvas id="evoViews"></canvas></div></div>';
+h+='<div class="card"><h3><span class="dot"></span>Likes</h3><div class="chart-wrap compact"><canvas id="evoLikes"></canvas></div></div>';
+h+='<div class="card"><h3><span class="dot"></span>Engagement %</h3><div class="chart-wrap compact"><canvas id="evoEng"></canvas></div></div>';
+h+='<div class="card"><h3><span class="dot"></span>Posts / jour</h3><div class="chart-wrap compact"><canvas id="evoPosts"></canvas></div></div>';
 h+='</div>';
 document.getElementById('dashArea').innerHTML=h;
 var labels=daily.map(function(x){return x.date.slice(5)});
-var lineOpts={responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{display:false},ticks:{color:'#64748b',font:{size:10}}},y:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'#64748b'}}}};
-function lineCfg(data,color){return{type:'line',data:{labels:labels,datasets:[{data:data,borderColor:color,backgroundColor:color.replace(')',',0.1)').replace('rgb','rgba'),fill:true,tension:0.4,pointRadius:3,pointBackgroundColor:color}]},options:lineOpts}}
+var lineOpts={responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{display:false}},y:{grid:{color:'rgba(255,255,255,0.04)'},beginAtZero:true}}};
+// Smoother curve, smaller points, softer fill — modern SaaS look
+function lineCfg(data,color){return{type:'line',data:{labels:labels,datasets:[{data:data,borderColor:color,borderWidth:2,backgroundColor:color.replace(')',',0.08)').replace('rgb','rgba'),fill:true,tension:0.35,pointRadius:0,pointHoverRadius:5,pointBackgroundColor:color,pointBorderColor:'#fff',pointBorderWidth:2}]},options:lineOpts}}
 makeChart('evoViews',lineCfg(daily.map(function(x){return x.views}),'rgb(124,58,237)'));
 makeChart('evoLikes',lineCfg(daily.map(function(x){return x.likes}),'rgb(225,48,108)'));
 makeChart('evoEng',lineCfg(daily.map(function(x){return+x.eng.toFixed(2)}),'rgb(16,185,129)'));
@@ -921,19 +967,43 @@ function loadAllTimeDash(){
     // 4 trend charts (last 90 days). They show the "shape" over recent history.
     h+='<div class="sec-title" style="margin-top:20px">Tendance sur les 90 derniers jours</div>';
     h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">';
-    h+='<div class="card"><h3><span class="dot"></span>Vues</h3><div class="chart-wrap"><canvas id="evoViews"></canvas></div></div>';
-    h+='<div class="card"><h3><span class="dot"></span>Likes</h3><div class="chart-wrap"><canvas id="evoLikes"></canvas></div></div>';
-    h+='<div class="card"><h3><span class="dot"></span>Engagement %</h3><div class="chart-wrap"><canvas id="evoEng"></canvas></div></div>';
-    h+='<div class="card"><h3><span class="dot"></span>Posts / jour</h3><div class="chart-wrap"><canvas id="evoPosts"></canvas></div></div>';
+    h+='<div class="card"><h3><span class="dot"></span>Vues</h3><div class="chart-wrap compact"><canvas id="evoViews"></canvas></div></div>';
+    h+='<div class="card"><h3><span class="dot"></span>Likes</h3><div class="chart-wrap compact"><canvas id="evoLikes"></canvas></div></div>';
+    h+='<div class="card"><h3><span class="dot"></span>Engagement %</h3><div class="chart-wrap compact"><canvas id="evoEng"></canvas></div></div>';
+    h+='<div class="card"><h3><span class="dot"></span>Posts / jour</h3><div class="chart-wrap compact"><canvas id="evoPosts"></canvas></div></div>';
     h+='</div>';
 
-    // VA leaderboard table
-    h+='<div class="card"><h3><span class="dot"></span>Tableau detaille (depuis toujours)</h3><table class="tbl"><thead><tr><th>#</th><th>VA</th><th>Badge</th><th>Posts</th><th>Vues</th><th>Likes</th><th>'+commLabel+'</th><th>'+rtLabel+'</th><th>Score</th><th>Eng.</th><th>Moy/p</th></tr></thead><tbody>';
+    // VA leaderboard — same SaaS-style table as the main dashboard
+    h+='<div class="card"><h3><span class="dot"></span>Performance par VA (depuis toujours)</h3>';
+    h+='<table class="tbl tbl-clean"><thead><tr>';
+    h+='<th style="width:60px">Rang</th>';
+    h+='<th>VA</th>';
+    h+='<th style="text-align:right">Posts</th>';
+    h+='<th style="text-align:right">Vues</th>';
+    h+='<th style="text-align:right;width:110px">Engagement</th>';
+    h+='<th style="text-align:right;width:90px">Score</th>';
+    h+='</tr></thead><tbody>';
     s.forEach(function(x,i){
-      var m=i<3?['🥇','🥈','🥉'][i]:''+(i+1);
       var pc=Number(x.post_count);
-      var avg=pc>0?fm(Math.round(Number(x.total_views)/pc)):'0';
-      h+='<tr onclick="openVA(\''+x.va_discord_id+'\',\''+x.va_name+'\')"><td>'+m+'</td><td><b>'+x.va_name+'</b></td><td>'+vaBadge(x.badge)+'</td><td>'+pc+'</td><td>'+fm(Number(x.total_views))+'</td><td>'+fm(Number(x.total_likes))+'</td><td>'+fm(Number(x.total_comments))+'</td><td>'+fm(Number(x.total_shares||0))+'</td><td style="color:var(--orange);font-weight:700">'+fm(x.total_score)+'</td><td>'+x.engagement_rate+'%</td><td>'+avg+'</td></tr>';
+      var avg=pc>0?Math.round(Number(x.total_views)/pc):0;
+      var isTop=i<3;
+      var medals=['🥇','🥈','🥉'];
+      var rankCell=isTop?'<span style="font-size:18px">'+medals[i]+'</span>':'<span style="color:var(--text3);font-weight:700">'+(i+1)+'</span>';
+      var engRate=parseFloat(x.engagement_rate);
+      var engBg=engRate>=2?'rgba(16,185,129,0.15)':engRate>=1?'rgba(245,158,11,0.15)':'rgba(239,68,68,0.15)';
+      var engColor=engRate>=2?'var(--green)':engRate>=1?'var(--orange)':'var(--red)';
+      var rowBg=isTop?'background:linear-gradient(90deg,rgba(124,58,237,0.04),transparent)':'';
+      var vaWeight=isTop?'700':'500';
+      var vaColor=isTop?'var(--text)':'var(--text2)';
+      var avgInfo=avg>0?'<div style="font-size:10px;color:var(--text3);margin-top:2px">Moy: '+fm(avg)+' vues/post</div>':'';
+      h+='<tr onclick="openVA(\''+x.va_discord_id+'\',\''+x.va_name+'\')" style="'+rowBg+'cursor:pointer">';
+      h+='<td>'+rankCell+'</td>';
+      h+='<td><div style="font-weight:'+vaWeight+';color:'+vaColor+'">'+escapeHtml(x.va_name)+'</div>'+avgInfo+'</td>';
+      h+='<td style="text-align:right;font-weight:600;font-variant-numeric:tabular-nums">'+pc+'</td>';
+      h+='<td style="text-align:right;font-weight:600;font-variant-numeric:tabular-nums">'+fm(Number(x.total_views))+'</td>';
+      h+='<td style="text-align:right"><span style="display:inline-block;padding:3px 10px;border-radius:12px;font-size:11px;font-weight:700;background:'+engBg+';color:'+engColor+'">'+x.engagement_rate+'%</span></td>';
+      h+='<td style="text-align:right;font-weight:'+(isTop?'800':'600')+';color:var(--orange);font-variant-numeric:tabular-nums">'+fm(x.total_score)+'</td>';
+      h+='</tr>';
     });
     h+='</tbody></table></div>';
     document.getElementById('dashArea').innerHTML=h;
@@ -947,8 +1017,8 @@ function loadAllTimeDash(){
       return{date:x.date,views:tv,likes:tl,comments:tc,posts:tp,eng:tv>0?(tl+tc)/tv*100:0};
     }).reverse();
     var labels=daily.map(function(x){return x.date.slice(5)});
-    var lineOpts={responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{display:false},ticks:{color:'#64748b',font:{size:9},maxRotation:0,autoSkipPadding:8}},y:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'#64748b'}}}};
-    function lineCfg(data,color){return{type:'line',data:{labels:labels,datasets:[{data:data,borderColor:color,backgroundColor:color.replace(')',',0.1)').replace('rgb','rgba'),fill:true,tension:0.4,pointRadius:1,pointBackgroundColor:color}]},options:lineOpts}}
+    var lineOpts={responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{display:false},ticks:{font:{size:9},maxRotation:0,autoSkipPadding:8}},y:{grid:{color:'rgba(255,255,255,0.04)'},beginAtZero:true}}};
+    function lineCfg(data,color){return{type:'line',data:{labels:labels,datasets:[{data:data,borderColor:color,borderWidth:2,backgroundColor:color.replace(')',',0.08)').replace('rgb','rgba'),fill:true,tension:0.35,pointRadius:0,pointHoverRadius:5,pointBackgroundColor:color,pointBorderColor:'#fff',pointBorderWidth:2}]},options:lineOpts}}
     makeChart('evoViews',lineCfg(daily.map(function(x){return x.views}),'rgb(124,58,237)'));
     makeChart('evoLikes',lineCfg(daily.map(function(x){return x.likes}),'rgb(225,48,108)'));
     makeChart('evoEng',lineCfg(daily.map(function(x){return+x.eng.toFixed(2)}),'rgb(16,185,129)'));
