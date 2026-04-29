@@ -244,14 +244,37 @@ async function getPostMilestones(postId) {
 
 async function computeDailySummary(date, platform) {
   if (platform) {
-    var sql = "INSERT INTO daily_summaries (va_discord_id, va_name, date, platform, post_count, total_views, total_likes, total_comments, total_shares) SELECT p.va_discord_id, p.va_name, $1::date, $3, COUNT(DISTINCT p.id), COALESCE(SUM(latest.views), 0), COALESCE(SUM(latest.likes), 0), COALESCE(SUM(latest.comments), 0), COALESCE(SUM(latest.shares), 0) FROM posts p LEFT JOIN LATERAL (SELECT views, likes, comments, shares FROM snapshots s WHERE s.post_id = p.id ORDER BY s.scraped_at DESC LIMIT 1) latest ON true WHERE p.deleted_at IS NULL AND p.created_at::date = $1::date AND p.platform = $2 GROUP BY p.va_discord_id, p.va_name ON CONFLICT (va_discord_id, date, platform) DO UPDATE SET post_count = EXCLUDED.post_count, total_views = EXCLUDED.total_views, total_likes = EXCLUDED.total_likes, total_comments = EXCLUDED.total_comments, total_shares = EXCLUDED.total_shares RETURNING *";
+    // We compare dates in Africa/Porto-Novo TZ (the team's working TZ) so a post
+    // created at 1am local time is correctly attributed to that calendar day,
+    // not to the previous UTC day. PostgreSQL's `AT TIME ZONE` converts
+    // a TIMESTAMPTZ to a TIMESTAMP at the specified zone before casting to date.
+    var sql = "INSERT INTO daily_summaries (va_discord_id, va_name, date, platform, post_count, total_views, total_likes, total_comments, total_shares) " +
+      "SELECT p.va_discord_id, p.va_name, $1::date, $3, COUNT(DISTINCT p.id), " +
+      "       COALESCE(SUM(latest.views), 0), COALESCE(SUM(latest.likes), 0), " +
+      "       COALESCE(SUM(latest.comments), 0), COALESCE(SUM(latest.shares), 0) " +
+      "FROM posts p " +
+      "LEFT JOIN LATERAL (SELECT views, likes, comments, shares FROM snapshots s WHERE s.post_id = p.id ORDER BY s.scraped_at DESC LIMIT 1) latest ON true " +
+      "WHERE p.deleted_at IS NULL " +
+      "  AND (p.created_at AT TIME ZONE 'Africa/Porto-Novo')::date = $1::date " +
+      "  AND p.platform = $2 " +
+      "GROUP BY p.va_discord_id, p.va_name " +
+      "ON CONFLICT (va_discord_id, date, platform) DO UPDATE SET " +
+      "  post_count = EXCLUDED.post_count, total_views = EXCLUDED.total_views, " +
+      "  total_likes = EXCLUDED.total_likes, total_comments = EXCLUDED.total_comments, " +
+      "  total_shares = EXCLUDED.total_shares " +
+      "RETURNING *";
     var result = await pool.query(sql, [date, platform, platform]);
     return result.rows;
   }
-  // Compute for all platforms separately
-  var igRows = await computeDailySummary(date, 'instagram');
-  var twRows = await computeDailySummary(date, 'twitter');
-  return igRows.concat(twRows);
+  // Compute for all active platforms (was previously hardcoded to IG + Twitter,
+  // missing Geelark and Threads — that's why some platforms had empty stats).
+  var allRows = [];
+  var platforms = ['instagram', 'twitter', 'geelark', 'threads'];
+  for (var i = 0; i < platforms.length; i++) {
+    var rows = await computeDailySummary(date, platforms[i]);
+    allRows = allRows.concat(rows);
+  }
+  return allRows;
 }
 
 async function getDailySummaries(date, platform) {
@@ -272,11 +295,11 @@ async function getRangeSummaries(fromDate, toDate, platform) {
   var params = [];
   if (fromDate) {
     params.push(fromDate);
-    conditions.push("p.created_at::date >= $" + params.length);
+    conditions.push("(p.created_at AT TIME ZONE 'Africa/Porto-Novo')::date >= $" + params.length);
   }
   if (toDate) {
     params.push(toDate);
-    conditions.push("p.created_at::date <= $" + params.length);
+    conditions.push("(p.created_at AT TIME ZONE 'Africa/Porto-Novo')::date <= $" + params.length);
   }
   if (platform) {
     params.push(platform);
@@ -315,10 +338,10 @@ async function getVaDailyStats(vaDiscordId, date, platform) {
 
 async function getVaPostsToday(vaDiscordId, date, platform) {
   if (platform) {
-    var result = await pool.query('SELECT * FROM posts WHERE va_discord_id = $1 AND created_at::date = $2 AND platform = $3 ORDER BY created_at ASC', [vaDiscordId, date, platform]);
+    var result = await pool.query("SELECT * FROM posts WHERE va_discord_id = $1 AND (created_at AT TIME ZONE 'Africa/Porto-Novo')::date = $2 AND platform = $3 ORDER BY created_at ASC", [vaDiscordId, date, platform]);
     return result.rows;
   }
-  var result2 = await pool.query('SELECT * FROM posts WHERE va_discord_id = $1 AND created_at::date = $2 ORDER BY created_at ASC', [vaDiscordId, date]);
+  var result2 = await pool.query("SELECT * FROM posts WHERE va_discord_id = $1 AND (created_at AT TIME ZONE 'Africa/Porto-Novo')::date = $2 ORDER BY created_at ASC", [vaDiscordId, date]);
   return result2.rows;
 }
 
@@ -326,7 +349,7 @@ async function getVaPostsToday(vaDiscordId, date, platform) {
 // VA detail modal when the user has selected a multi-day period (e.g. "7 jours").
 // from and to are 'YYYY-MM-DD' strings.
 async function getVaPostsRange(vaDiscordId, fromDate, toDate, platform) {
-  var sql = 'SELECT * FROM posts WHERE va_discord_id = $1 AND created_at::date BETWEEN $2 AND $3 AND deleted_at IS NULL';
+  var sql = "SELECT * FROM posts WHERE va_discord_id = $1 AND (created_at AT TIME ZONE 'Africa/Porto-Novo')::date BETWEEN $2 AND $3 AND deleted_at IS NULL";
   var params = [vaDiscordId, fromDate, toDate];
   if (platform) { sql += ' AND platform = $4'; params.push(platform); }
   sql += ' ORDER BY created_at DESC';
@@ -377,10 +400,10 @@ async function endExpiredPosts() {
 async function getPostsForExport(date, platform) {
   var sql, params;
   if (platform) {
-    sql = "SELECT p.va_name, p.url, p.ig_post_id, p.platform, p.created_at, p.status, p.performance, s.views, s.likes, s.comments, s.shares, s.retweets, s.quote_tweets, s.bookmarks, s.scraped_at FROM posts p JOIN snapshots s ON s.post_id = p.id WHERE p.deleted_at IS NULL AND p.created_at::date = $1 AND p.platform = $2 ORDER BY p.va_name, p.created_at, s.scraped_at";
+    sql = "SELECT p.va_name, p.url, p.ig_post_id, p.platform, p.created_at, p.status, p.performance, s.views, s.likes, s.comments, s.shares, s.retweets, s.quote_tweets, s.bookmarks, s.scraped_at FROM posts p JOIN snapshots s ON s.post_id = p.id WHERE p.deleted_at IS NULL AND (p.created_at AT TIME ZONE 'Africa/Porto-Novo')::date = $1 AND p.platform = $2 ORDER BY p.va_name, p.created_at, s.scraped_at";
     params = [date, platform];
   } else {
-    sql = "SELECT p.va_name, p.url, p.ig_post_id, p.platform, p.created_at, p.status, p.performance, s.views, s.likes, s.comments, s.shares, s.retweets, s.quote_tweets, s.bookmarks, s.scraped_at FROM posts p JOIN snapshots s ON s.post_id = p.id WHERE p.deleted_at IS NULL AND p.created_at::date = $1 ORDER BY p.platform, p.va_name, p.created_at, s.scraped_at";
+    sql = "SELECT p.va_name, p.url, p.ig_post_id, p.platform, p.created_at, p.status, p.performance, s.views, s.likes, s.comments, s.shares, s.retweets, s.quote_tweets, s.bookmarks, s.scraped_at FROM posts p JOIN snapshots s ON s.post_id = p.id WHERE p.deleted_at IS NULL AND (p.created_at AT TIME ZONE 'Africa/Porto-Novo')::date = $1 ORDER BY p.platform, p.va_name, p.created_at, s.scraped_at";
     params = [date];
   }
   var result = await pool.query(sql, params);
@@ -389,8 +412,8 @@ async function getPostsForExport(date, platform) {
 
 async function getTopPostsWithPerformance(date, platform) {
   var whereClause = platform
-    ? "WHERE p.deleted_at IS NULL AND p.created_at::date = $1 AND p.platform = $2"
-    : "WHERE p.created_at::date = $1";
+    ? "WHERE p.deleted_at IS NULL AND (p.created_at AT TIME ZONE 'Africa/Porto-Novo')::date = $1 AND p.platform = $2"
+    : "WHERE (p.created_at AT TIME ZONE 'Africa/Porto-Novo')::date = $1";
   var params = platform ? [date, platform] : [date];
   var sql = "SELECT p.id, p.ig_post_id, p.url, p.va_name, p.va_discord_id, p.created_at, p.performance, p.post_type, p.platform, s.views, s.likes, s.comments, s.shares, s.retweets, s.quote_tweets, s.bookmarks FROM posts p LEFT JOIN LATERAL (SELECT views, likes, comments, shares, retweets, quote_tweets, bookmarks FROM snapshots sn WHERE sn.post_id = p.id ORDER BY sn.scraped_at DESC LIMIT 1) s ON true " + whereClause + " ORDER BY COALESCE(s.views, 0) DESC LIMIT 30";
   var result = await pool.query(sql, params);
@@ -646,7 +669,7 @@ async function getVaActivityStatus(platform) {
   var sql =
     "SELECT p.va_discord_id, " +
     "       MAX(p.va_name) AS va_name, " +
-    "       COUNT(*) FILTER (WHERE p.created_at::date = CURRENT_DATE) AS posts_today, " +
+    "       COUNT(*) FILTER (WHERE (p.created_at AT TIME ZONE 'Africa/Porto-Novo')::date = CURRENT_DATE) AS posts_today, " +
     "       COUNT(*) FILTER (WHERE p.created_at >= NOW() - INTERVAL '7 days') AS posts_7d, " +
     "       MAX(p.created_at) AS last_post_at " +
     "FROM posts p " +
@@ -658,8 +681,8 @@ async function getVaActivityStatus(platform) {
 
 async function getNuggets(date, platform) {
   var whereClause = platform
-    ? "WHERE p.deleted_at IS NULL AND p.created_at::date = $1 AND p.platform = $2 AND COALESCE(s.views, 0) > 0"
-    : "WHERE p.created_at::date = $1 AND COALESCE(s.views, 0) > 0";
+    ? "WHERE p.deleted_at IS NULL AND (p.created_at AT TIME ZONE 'Africa/Porto-Novo')::date = $1 AND p.platform = $2 AND COALESCE(s.views, 0) > 0"
+    : "WHERE (p.created_at AT TIME ZONE 'Africa/Porto-Novo')::date = $1 AND COALESCE(s.views, 0) > 0";
   var params = platform ? [date, platform] : [date];
   var sql = "SELECT p.id, p.ig_post_id, p.url, p.va_name, p.va_discord_id, p.created_at, p.caption, p.performance, p.platform, s.views, s.likes, s.comments, s.shares FROM posts p LEFT JOIN LATERAL (SELECT views, likes, comments, shares FROM snapshots sn WHERE sn.post_id = p.id ORDER BY sn.scraped_at DESC LIMIT 1) s ON true " + whereClause + " ORDER BY COALESCE(s.views, 0) DESC LIMIT 15";
   var result = await pool.query(sql, params);
@@ -688,12 +711,12 @@ async function getRecommendations(dateOrPeriod, platform) {
     // prefix: "p." or "" depending on table alias
     if (fromDate && toDate) {
       return {
-        clause: prefix + 'created_at::date >= $' + paramOffset + ' AND ' + prefix + 'created_at::date <= $' + (paramOffset + 1),
+        clause: prefix + "(created_at AT TIME ZONE 'Africa/Porto-Novo')::date >= $" + paramOffset + ' AND ' + prefix + "(created_at AT TIME ZONE 'Africa/Porto-Novo')::date <= $" + (paramOffset + 1),
         params: [fromDate, toDate],
       };
     } else if (toDate) {
       return {
-        clause: prefix + 'created_at::date <= $' + paramOffset,
+        clause: prefix + "(created_at AT TIME ZONE 'Africa/Porto-Novo')::date <= $" + paramOffset,
         params: [toDate],
       };
     }
@@ -947,7 +970,7 @@ async function recordWeeklyWinner(weekStart, weekEnd, platform) {
 
   // Count posts published that week by the winner
   var postsSql = "SELECT COUNT(*)::int AS cnt FROM posts WHERE va_discord_id = $1 AND platform = $2 " +
-    "AND created_at::date >= $3 AND created_at::date <= $4";
+    "AND (created_at AT TIME ZONE 'Africa/Porto-Novo')::date >= $3 AND (created_at AT TIME ZONE 'Africa/Porto-Novo')::date <= $4";
   var postsResult = await pool.query(postsSql, [winner.va_discord_id, platform, weekStart, weekEnd]);
   var totalPosts = postsResult.rows[0].cnt || 0;
 
@@ -1013,7 +1036,7 @@ async function resolveWeeklyDuels(weekStart, weekEnd, platform) {
       "  ORDER BY sn.scraped_at DESC LIMIT 1 " +
       ") s ON true " +
       "WHERE p.platform = $1 AND p.va_discord_id IN ($2, $3) " +
-      "AND p.created_at::date >= $4 AND p.created_at::date <= $5 " +
+      "AND (p.created_at AT TIME ZONE 'Africa/Porto-Novo')::date >= $4 AND (p.created_at AT TIME ZONE 'Africa/Porto-Novo')::date <= $5 " +
       "GROUP BY va_discord_id";
     var viewsResult = await pool.query(viewsSql, [platform, d.va1_discord_id, d.va2_discord_id, weekStart, weekEnd]);
     var map = {};
