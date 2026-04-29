@@ -338,6 +338,16 @@ DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='dashboard_users' AND column_name='last_check_at') THEN
     ALTER TABLE dashboard_users ADD COLUMN last_check_at TIMESTAMPTZ;
   END IF;
+
+  -- Migration: extend tracking_end for posts created in the last 72h that were
+  -- truncated to 23h59 of their creation day. Catches up posts whose tracking
+  -- ended too early. Only updates posts still within their natural 72h window.
+  UPDATE posts
+  SET tracking_end = created_at + INTERVAL '72 hours',
+      status = 'active'
+  WHERE created_at >= NOW() - INTERVAL '72 hours'
+    AND deleted_at IS NULL
+    AND tracking_end < created_at + INTERVAL '72 hours';
 END $$;
 CREATE INDEX IF NOT EXISTS idx_dashboard_users_status ON dashboard_users(status);
 
