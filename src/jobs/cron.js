@@ -13,6 +13,15 @@ function initCronJobs(client) {
     try { await db.endExpiredPosts(); } catch (err) { console.error('Expiration cron failed', err.message); }
   });
 
+  // Daily prune of old in-app notifications (older than 14 days). Runs at 04:00
+  // Bénin time which is a quiet hour for the bot.
+  cron.schedule('0 4 * * *', async function() {
+    try {
+      var pruned = await db.pruneOldNotifications();
+      if (pruned > 0) console.log('[Notif] Pruned ' + pruned + ' old notifications (>14d)');
+    } catch (err) { console.error('Notif prune failed:', err.message); }
+  }, { timezone: 'Africa/Porto-Novo' });
+
   // Daily summary at 23:59 Africa/Porto-Novo (Benin) — for each platform.
   // Same TZ as personal recap so both are aligned with the team's working day.
   cron.schedule('59 23 * * *', async function() {
