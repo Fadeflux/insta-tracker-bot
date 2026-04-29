@@ -1184,6 +1184,36 @@ function createWebServer() {
     } catch(err) { res.status(500).json({ error: err.message }); }
   });
 
+  // === In-app notifications (bell icon) ===
+  // List recent notifications, optionally filtered by platform.
+  app.get('/api/notifications', checkAuth, async function(req, res) {
+    try {
+      var platform = getEffectivePlatform(req);
+      var limit = Math.min(parseInt(req.query.limit) || 50, 200);
+      var notifs = await db.getNotifications(platform, limit);
+      res.json({ notifications: notifs, platform: platform || 'all' });
+    } catch(err) { res.status(500).json({ error: err.message }); }
+  });
+
+  // Unread count badge for the bell icon. Tied to req.user so two users on the
+  // same platform have independent unread counts.
+  app.get('/api/notifications/unread', checkAuth, async function(req, res) {
+    try {
+      var platform = getEffectivePlatform(req);
+      var count = await db.getUnreadCount(req.user, platform);
+      res.json({ unread: count, platform: platform || 'all' });
+    } catch(err) { res.status(500).json({ error: err.message }); }
+  });
+
+  // Mark all notifications for this user/platform as read up to NOW.
+  app.post('/api/notifications/mark-read', checkAuth, async function(req, res) {
+    try {
+      var platform = getEffectivePlatform(req);
+      await db.markNotificationsRead(req.user, platform);
+      res.json({ success: true });
+    } catch(err) { res.status(500).json({ error: err.message }); }
+  });
+
   // === Soft delete a post (admin or manager-of-platform) ===
   // The post stays in the DB with deleted_at filled. It's hidden from rankings
   // and totals but can be restored. Permission check: managers can only delete
