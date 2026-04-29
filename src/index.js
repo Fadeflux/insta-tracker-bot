@@ -70,6 +70,16 @@ client.once('ready', async function() {
   console.log('Bot connected as ' + client.user.tag);
   console.log('Guilds: ' + client.guilds.cache.map(function(g) { return g.name + ' (' + g.id + ')'; }).join(', '));
   setDiscordClient(client);
+
+  // Hook the crash-alerts module to the Discord client so it can send #notif-crash messages
+  try {
+    var crashAlerts = require('./jobs/crashAlerts');
+    crashAlerts.setDiscordClient(client);
+    console.log('[CrashAlert] Module wired to Discord client (threshold=' + crashAlerts.THRESHOLD + ' consecutive failures)');
+  } catch (e) {
+    console.error('[CrashAlert] Setup failed:', e.message);
+  }
+
   createNotifyWorker();
   initCronJobs(client);
   // Register slash commands (idempotent — safe to run on every boot)
