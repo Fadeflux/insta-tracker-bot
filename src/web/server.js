@@ -252,8 +252,24 @@ function createWebServer() {
   app.get('/api/va/:discordId', checkAuth, async function(req, res) {
     try {
       var platform = getEffectivePlatform(req);
+      var fromDate = req.query.from;
+      var toDate = req.query.to;
+      var allTime = req.query.all === '1';
       var date = req.query.date || new Date().toISOString().split('T')[0];
-      var posts = await db.getVaPostsToday(req.params.discordId, date, platform);
+
+      // Decide which post fetch strategy to use:
+      //   - all=1                → all posts ever
+      //   - from && to           → all posts in [from, to]
+      //   - else (legacy)        → posts on a single date (default = today)
+      var posts;
+      if (allTime) {
+        posts = await db.getVaPostsAll(req.params.discordId, platform);
+      } else if (fromDate && toDate) {
+        posts = await db.getVaPostsRange(req.params.discordId, fromDate, toDate, platform);
+      } else {
+        posts = await db.getVaPostsToday(req.params.discordId, date, platform);
+      }
+
       var snapshots = [];
       for (var i = 0; i < posts.length; i++) {
         var history = await db.getSnapshotHistory(posts[i].id);
@@ -271,8 +287,34 @@ function createWebServer() {
           performance: perf,
         });
       }
-      var stats = await db.getVaDailyStats(req.params.discordId, date, platform);
-      res.json({ va_id: req.params.discordId, date: date, platform: platform || 'all', posts: snapshots, stats: stats });
+
+      // Stats: aggregate over the range / all time / single day
+      var stats;
+      if (allTime) {
+        // Aggregate from all daily_summaries
+        var sumSql = 'SELECT MAX(va_name) AS va_name, SUM(post_count)::int AS post_count, ' +
+          'SUM(total_views)::bigint AS total_views, SUM(total_likes)::bigint AS total_likes, ' +
+          'SUM(total_comments)::bigint AS total_comments, SUM(total_shares)::bigint AS total_shares ' +
+          'FROM daily_summaries WHERE va_discord_id = $1' + (platform ? ' AND platform = $2' : '');
+        var sumParams = platform ? [req.params.discordId, platform] : [req.params.discordId];
+        var allStats = await db.pool.query(sumSql, sumParams);
+        stats = allStats.rows[0];
+      } else if (fromDate && toDate) {
+        stats = await db.getVaRangeStats(req.params.discordId, fromDate, toDate, platform);
+      } else {
+        stats = await db.getVaDailyStats(req.params.discordId, date, platform);
+      }
+
+      res.json({
+        va_id: req.params.discordId,
+        date: date,
+        from: fromDate || null,
+        to: toDate || null,
+        allTime: allTime,
+        platform: platform || 'all',
+        posts: snapshots,
+        stats: stats,
+      });
     } catch(err) { res.status(500).json({ error: err.message }); }
   });
 
