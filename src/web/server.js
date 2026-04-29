@@ -1171,6 +1171,19 @@ function createWebServer() {
     } catch(err) { res.status(500).json({ error: err.message }); }
   });
 
+  // === Crash alerts state monitoring (admin) ===
+  // Returns the per-platform consecutive-failure counters and whether an alert
+  // has been fired for each. Useful to debug "why didn't I get an alert?".
+  app.get('/api/admin/crash-alerts', checkAuth, checkAdmin, function(req, res) {
+    try {
+      var crashAlerts = require('../jobs/crashAlerts');
+      res.json({
+        threshold: crashAlerts.THRESHOLD,
+        platforms: crashAlerts.getStatus(),
+      });
+    } catch(err) { res.status(500).json({ error: err.message }); }
+  });
+
   // === Soft delete a post (admin or manager-of-platform) ===
   // The post stays in the DB with deleted_at filled. It's hidden from rankings
   // and totals but can be restored. Permission check: managers can only delete
