@@ -211,13 +211,35 @@ var scrapeWorker = new Worker(
     // === Schedule next scrape ===
     // For Threads, we use a sparser schedule (H+1, H+6, H+12, H+24) to spare the
     // sacrificial accounts from getting banned too quickly. For other platforms,
-    // we keep the hourly cadence.
+    // we keep the hourly cadence over the 72h tracking window.
+    //
+    // The jobId is built from the post id AND the scheduled execution time
+    // (rounded to the minute). This makes it idempotent: if two scheduling
+    // attempts produce the same target slot (e.g. resumeOrphanScrapes running
+    // while the worker also reschedules), BullMQ rejects the second one and
+    // we don't end up scraping the same post multiple times in the same minute.
     var nextScrapeDelayMs = computeNextScrapeDelay(post.created_at, platform);
     if (nextScrapeDelayMs != null) {
       var nextScrape = new Date(Date.now() + nextScrapeDelayMs);
       if (nextScrape < new Date(post.tracking_end)) {
-        await scrapeQueue.add('scrape-post', { postId: postId, url: url, platform: platform }, { delay: nextScrapeDelayMs, jobId: 'scrape-' + postId + '-' + Date.now() });
-        logger.info('[' + platform.toUpperCase() + '] Next scrape for post ' + postId + ' in ' + Math.round(nextScrapeDelayMs / 60000) + ' min');
+        // Round target time to the nearest minute so close-but-not-identical
+        // attempts collide on the same jobId.
+        var slot = Math.floor((Date.now() + nextScrapeDelayMs) / 60000);
+        var stableJobId = 'scrape-' + postId + '-slot-' + slot;
+        try {
+          await scrapeQueue.add(
+            'scrape-post',
+            { postId: postId, url: url, platform: platform },
+            { delay: nextScrapeDelayMs, jobId: stableJobId }
+          );
+          logger.info('[' + platform.toUpperCase() + '] Next scrape for post ' + postId + ' in ' + Math.round(nextScrapeDelayMs / 60000) + ' min');
+        } catch (e) {
+          // BullMQ throws if the jobId already exists. That's the desired
+          // "skip duplicate" behavior — log it quietly and move on.
+          if (String(e.message).indexOf('exists') === -1) {
+            logger.warn('[' + platform.toUpperCase() + '] Failed to schedule next scrape: ' + e.message);
+          }
+        }
       }
     }
 
@@ -289,12 +311,6 @@ async function scheduleInitialScrape(postId, url, platform) {
 //   - We want to recover gracefully from any missed scheduling
 async function resumeOrphanScrapes() {
   try {
-    var pool = require('../db/queries').pool;
-    if (!pool) {
-      // Fallback: load directly via the db module if pool isn't exposed
-      var db = require('../db/queries');
-      pool = db.pool;
-    }
     var db2 = require('../db/queries');
     var result = await db2.pool.query(
       "SELECT id, url, platform, created_at FROM posts " +
@@ -309,23 +325,49 @@ async function resumeOrphanScrapes() {
       return;
     }
 
-    var resumed = 0;
+    // STEP 1: Clean up any stale "resume" jobs from previous deploys.
+    // Without this, every Railway redeploy stacked another batch of jobs on top
+    // of the previous batch — the same post ended up being scraped 3-6 times in
+    // a row at every cycle, hammering the proxy and risking IG bans.
+    try {
+      var delayed = await scrapeQueue.getJobs(['delayed', 'waiting']);
+      var removed = 0;
+      for (var k = 0; k < delayed.length; k++) {
+        var j = delayed[k];
+        if (j.id && j.id.indexOf('-resume-') !== -1) {
+          await j.remove();
+          removed++;
+        }
+      }
+      if (removed > 0) logger.info('[Scrape] Cleared ' + removed + ' stale resume jobs before re-scheduling');
+    } catch (cleanErr) {
+      logger.warn('[Scrape] Failed to clean stale jobs: ' + cleanErr.message);
+    }
+
+    // STEP 2: Schedule one job per post, with a STABLE jobId based on the
+    // target execution slot (post id + minute). This collides with the slots
+    // used by the running worker, so if a job is already queued for the same
+    // post and same minute, BullMQ rejects this one. No more duplicates.
+    var resumed = 0, skipped = 0;
     for (var i = 0; i < result.rows.length; i++) {
       var p = result.rows[i];
       var nextDelay = computeNextScrapeDelay(p.created_at, p.platform);
       if (nextDelay == null) continue;
+      var slot2 = Math.floor((Date.now() + nextDelay) / 60000);
+      var jobId2 = 'scrape-' + p.id + '-slot-' + slot2;
       try {
         await scrapeQueue.add(
           'scrape-post',
           { postId: p.id, url: p.url, platform: p.platform },
-          { delay: nextDelay, jobId: 'scrape-' + p.id + '-resume-' + Date.now() }
+          { delay: nextDelay, jobId: jobId2 }
         );
         resumed++;
       } catch (e) {
-        // Job might already exist — ignore
+        // Job for this slot already exists → skip silently
+        skipped++;
       }
     }
-    logger.info('[Scrape] Resumed scraping for ' + resumed + ' orphan posts (window: 72h)');
+    logger.info('[Scrape] Resumed scraping for ' + resumed + ' orphan posts (window: 72h)' + (skipped ? ', ' + skipped + ' skipped (already queued)' : ''));
   } catch (e) {
     logger.warn('[Scrape] resumeOrphanScrapes failed: ' + e.message);
   }
