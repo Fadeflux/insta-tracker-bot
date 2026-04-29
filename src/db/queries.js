@@ -322,6 +322,43 @@ async function getVaPostsToday(vaDiscordId, date, platform) {
   return result2.rows;
 }
 
+// Get all posts of a VA between two dates (inclusive). Used by the dashboard's
+// VA detail modal when the user has selected a multi-day period (e.g. "7 jours").
+// from and to are 'YYYY-MM-DD' strings.
+async function getVaPostsRange(vaDiscordId, fromDate, toDate, platform) {
+  var sql = 'SELECT * FROM posts WHERE va_discord_id = $1 AND created_at::date BETWEEN $2 AND $3 AND deleted_at IS NULL';
+  var params = [vaDiscordId, fromDate, toDate];
+  if (platform) { sql += ' AND platform = $4'; params.push(platform); }
+  sql += ' ORDER BY created_at DESC';
+  var r = await pool.query(sql, params);
+  return r.rows;
+}
+
+// Get all posts of a VA across all time (or filtered by platform). Used for the
+// "Depuis toujours" period in the VA detail modal.
+async function getVaPostsAll(vaDiscordId, platform) {
+  var sql = 'SELECT * FROM posts WHERE va_discord_id = $1 AND deleted_at IS NULL';
+  var params = [vaDiscordId];
+  if (platform) { sql += ' AND platform = $2'; params.push(platform); }
+  sql += ' ORDER BY created_at DESC';
+  var r = await pool.query(sql, params);
+  return r.rows;
+}
+
+// Aggregate daily_summaries between two dates for a VA. Returns combined totals.
+async function getVaRangeStats(vaDiscordId, fromDate, toDate, platform) {
+  var sql =
+    'SELECT $1::text AS va_discord_id, MAX(va_name) AS va_name, ' +
+    '       SUM(post_count)::int AS post_count, SUM(total_views)::bigint AS total_views, ' +
+    '       SUM(total_likes)::bigint AS total_likes, SUM(total_comments)::bigint AS total_comments, ' +
+    '       SUM(total_shares)::bigint AS total_shares ' +
+    'FROM daily_summaries WHERE va_discord_id = $1 AND date BETWEEN $2 AND $3';
+  var params = [vaDiscordId, fromDate, toDate];
+  if (platform) { sql += ' AND platform = $4'; params.push(platform); }
+  var r = await pool.query(sql, params);
+  return r.rows[0];
+}
+
 async function getLeaderboard(date, platform) {
   if (platform) {
     var result = await pool.query('SELECT * FROM daily_summaries WHERE date = $1 AND platform = $2 ORDER BY total_views DESC', [date, platform]);
@@ -1501,7 +1538,7 @@ module.exports = {
   // Snapshots
   insertSnapshot, getLatestSnapshot, getSnapshotHistory, getSnapshotAtHour, getPostMilestones,
   // Summaries
-  computeDailySummary, getDailySummaries, getRangeSummaries, getVaDailyStats, getVaPostsToday,
+  computeDailySummary, getDailySummaries, getRangeSummaries, getVaDailyStats, getVaPostsToday, getVaPostsRange, getVaPostsAll, getVaRangeStats,
   getLeaderboard, endExpiredPosts, getPostsForExport,
   // Analytics
   getTopPostsWithPerformance, getVaPerformanceHistory, checkViralPosts,
