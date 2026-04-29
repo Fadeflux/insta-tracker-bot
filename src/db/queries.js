@@ -1343,6 +1343,82 @@ async function touchDashboardUserCheck(username) {
   await pool.query('UPDATE dashboard_users SET last_check_at = NOW() WHERE username = $1', [username]);
 }
 
+// === Notifications (in-app bell icon) ===
+// Stored per platform so the bell badge filters to the platform the user views.
+// Two kinds today: 'viral_confirmed' (≥VIRAL_VIEWS) and 'fast_growth' (>1k vues/h).
+// Notifications never expire by themselves; clients should pull only the recent
+// ones and a daily cron prunes anything older than 14 days.
+
+// Insert a notification. Returns the new row, or null if a notification of the
+// same kind already exists for that post (avoids duplicates if scrape repeats).
+async function insertNotification(platform, kind, postId, vaName, title, body, url, metadata) {
+  // Dedupe: same kind on same post within the last 24h → skip
+  if (postId) {
+    var dup = await pool.query(
+      "SELECT id FROM notifications WHERE post_id = $1 AND kind = $2 AND created_at > NOW() - INTERVAL '24 hours' LIMIT 1",
+      [postId, kind]
+    );
+    if (dup.rows.length > 0) return null;
+  }
+  var result = await pool.query(
+    'INSERT INTO notifications (platform, kind, post_id, va_name, title, body, url, metadata) ' +
+    'VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
+    [platform, kind, postId || null, vaName || null, title || '', body || '', url || null, metadata ? JSON.stringify(metadata) : null]
+  );
+  return result.rows[0];
+}
+
+// Get notifications for a platform (or all if platform=null), most recent first.
+async function getNotifications(platform, limit) {
+  limit = limit || 50;
+  if (platform) {
+    var r = await pool.query(
+      'SELECT * FROM notifications WHERE platform = $1 ORDER BY created_at DESC LIMIT $2',
+      [platform, limit]
+    );
+    return r.rows;
+  }
+  var r2 = await pool.query('SELECT * FROM notifications ORDER BY created_at DESC LIMIT $1', [limit]);
+  return r2.rows;
+}
+
+// Get the count of unread notifications for a user on a specific platform.
+// "Unread" means created_at > the user's last_read_at for that platform.
+async function getUnreadCount(username, platform) {
+  if (!username) return 0;
+  var lastRead = await pool.query(
+    'SELECT last_read_at FROM notification_reads WHERE username = $1 AND platform = $2',
+    [username, platform || 'all']
+  );
+  var since = lastRead.rows[0] ? lastRead.rows[0].last_read_at : new Date('2000-01-01');
+  if (platform) {
+    var r = await pool.query(
+      'SELECT COUNT(*)::int AS c FROM notifications WHERE platform = $1 AND created_at > $2',
+      [platform, since]
+    );
+    return r.rows[0].c;
+  }
+  var r2 = await pool.query('SELECT COUNT(*)::int AS c FROM notifications WHERE created_at > $1', [since]);
+  return r2.rows[0].c;
+}
+
+// Mark all notifications for a (user, platform) pair as read up to now.
+async function markNotificationsRead(username, platform) {
+  if (!username) return;
+  var key = platform || 'all';
+  await pool.query(
+    'INSERT INTO notification_reads (username, platform, last_read_at) VALUES ($1, $2, NOW()) ' +
+    'ON CONFLICT (username, platform) DO UPDATE SET last_read_at = NOW()',
+    [username, key]
+  );
+}
+
+// Daily cleanup — delete notifications older than 14 days.
+async function pruneOldNotifications() {
+  var r = await pool.query("DELETE FROM notifications WHERE created_at < NOW() - INTERVAL '14 days'");
+  return r.rowCount;
+}
+
 module.exports = {
   pool: require('./init').pool,
   // Permissions
@@ -1365,6 +1441,8 @@ module.exports = {
   getShadowbanCandidates, computeShadowbanScore,
   markLateAlertSent, getLateLinkPosts, wasReminderSent, markReminderSent, countPostsBetween,
   softDeletePost, restorePost, getPostBasics,
+  // Notifications
+  insertNotification, getNotifications, getUnreadCount, markNotificationsRead, pruneOldNotifications,
   // Streaks
   updateStreak, getAllStreaks,
   // Alerts
