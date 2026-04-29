@@ -430,6 +430,23 @@ function periodButtonsHtml(onChange){
 
 function changeGlobalPeriod(p,onChange){
   setGlobalPeriod(p);
+  // Re-render the period button bar so the active button reflects the new
+  // selection. We find the .filters container that wraps our buttons and
+  // replace its HTML in place. This is necessary because the buttons store
+  // their active state directly in the markup ("btn-sm" vs "btn-sm btn-off").
+  var btn=document.querySelector('.filters');
+  if(btn){
+    // Compute new HTML for the same buttons (same onChange callback)
+    var newHtml=periodButtonsHtml(onChange);
+    // periodButtonsHtml wraps everything in <div class="filters">…</div>
+    // We need just the inner content because our btn IS the .filters
+    var tmp=document.createElement('div');
+    tmp.innerHTML=newHtml;
+    var newFilters=tmp.querySelector('.filters');
+    if(newFilters){
+      btn.innerHTML=newFilters.innerHTML;
+    }
+  }
   if(typeof window[onChange]==='function')window[onChange]();
 }
 function applyGlobalCustomDate(onChange){
