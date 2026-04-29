@@ -122,6 +122,46 @@ var scrapeWorker = new Worker(
           }
         }
       }
+
+      // === SHADOWBAN DETECTION ===
+      // After each scrape, check if this account's last 3 posts (≥24h old) all
+      // have <300 views. If so, fire a notification. The notif is dedup'd per
+      // post_id so we don't spam — but a NEW notif fires when the VA posts again
+      // and that new post also fails (because post_id is different).
+      if (post.account_id) {
+        try {
+          var sb = await db.detectShadowbannedAccount(post.account_id);
+          if (sb) {
+            // We tie the notification to the latest post_id, so each new failed
+            // post produces a new notif (the per-post dedup in insertNotification
+            // prevents repeats for the same post).
+            var sbTitle = '🚫 Compte probablement shadowbanné';
+            var sbBody =
+              '@' + sb.accountUsername +
+              ' (gere par ' + sb.vaName + ') — ' + sb.failedCount + ' posts a moins de 300 vues. ' +
+              'Il faut envisager de changer de compte.';
+            await db.insertNotification(
+              platform,
+              'shadowban_suspected',
+              sb.latestPostId,
+              sb.vaName,
+              sbTitle,
+              sbBody,
+              null, // no specific URL — the manager should look at the dashboard
+              {
+                accountUsername: sb.accountUsername,
+                accountId: sb.accountId,
+                vaDiscordId: sb.vaDiscordId,
+                failedCount: sb.failedCount,
+                postIds: sb.postIds,
+              }
+            );
+            logger.info('[Notif] shadowban_suspected for account @' + sb.accountUsername + ' (VA: ' + sb.vaName + ', ' + sb.failedCount + ' failed posts)');
+          }
+        } catch (sbErr) {
+          logger.warn('[Notif] shadowban detection failed: ' + sbErr.message);
+        }
+      }
     } catch (notifErr) {
       logger.warn('[Notif] insert failed: ' + notifErr.message);
     }
