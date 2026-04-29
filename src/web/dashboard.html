@@ -1314,47 +1314,115 @@ makeChart('hourlyChart',{type:'bar',data:{labels:hrs.map(function(h){return h.ho
 
 
 // ==================== GLOBAL (NEW — combined IG + Twitter) ====================
-function loadGlobal(){destroyCharts();
-if(ALLOWED_PLATS.length<2){document.getElementById('content').innerHTML='<div class="card"><p style="color:var(--text3);text-align:center;padding:40px">La vue Global necessite les deux plateformes (Instagram + Twitter).</p></div>';return}
-var h='<div class="filters"><input type="date" id="globalDate" value="'+dDate(0)+'"><button class="btn-sm" onclick="loadGlobalData()">Charger</button></div><div id="globalArea"><p style="color:var(--text3);text-align:center;padding:60px">Chargement...</p></div>';document.getElementById('content').innerHTML=h;loadGlobalData()}
-function loadGlobalData(){destroyCharts();var date=(document.getElementById('globalDate')||{value:dDate(0)}).value;
-Promise.all([
-fetch(A+'/api/stats/'+date+'?platform=instagram',{headers:{'X-Auth-Token':T}}).then(function(r){return r.json()}),
-fetch(A+'/api/stats/'+date+'?platform=twitter',{headers:{'X-Auth-Token':T}}).then(function(r){return r.json()}),
-fetch(A+'/api/stats/'+date+'?platform=geelark',{headers:{'X-Auth-Token':T}}).then(function(r){return r.json()})
-]).then(function(res){
-var ig=res[0].summaries,tw=res[1].summaries,gl=res[2].summaries;
-function sum(arr,k){return arr.reduce(function(a,b){return a+Number(b[k]||0)},0)}
-var igV=sum(ig,'total_views'),igL=sum(ig,'total_likes'),igP=sum(ig,'post_count');
-var twV=sum(tw,'total_views'),twL=sum(tw,'total_likes'),twP=sum(tw,'post_count');
-var glV=sum(gl,'total_views'),glL=sum(gl,'total_likes'),glP=sum(gl,'post_count');
-var totV=igV+twV+glV,totL=igL+twL+glL,totP=igP+twP+glP;
-var h='<div class="sec-title">📊 Vue Globale — '+date+'</div>';
-h+='<div class="kpis">';
-h+=kpi('📊',fm(totV),'Vues totales','IG+TW+GL','purple');
-h+=kpi('❤️',fm(totL),'Likes totaux','','pink');
-h+=kpi('📝',''+totP,'Posts totaux','','blue');
-h+=kpi('📸',fm(igV),'Vues Instagram','','pink');
-h+=kpi('🐦',fm(twV),'Vues Twitter','','blue');
-h+=kpi('📱',fm(glV),'Vues Geelark','','green');
-h+='</div>';
-h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">';
-h+='<div class="card"><h3><span class="dot" style="background:var(--pink)"></span>Repartition vues</h3><div class="chart-wrap"><canvas id="globalPie"></canvas></div></div>';
-h+='<div class="card"><h3><span class="dot" style="background:var(--blue)"></span>Comparaison</h3><div class="chart-wrap"><canvas id="globalBar"></canvas></div></div>';
-h+='</div>';
-h+='<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px">';
-h+='<div class="card" style="border-top:2px solid var(--pink)"><h3>📸 Instagram — '+ig.length+' VA</h3><table class="tbl"><thead><tr><th>VA</th><th>Vues</th><th>Likes</th><th>Posts</th></tr></thead><tbody>';
-ig.sort(function(a,b){return Number(b.total_views)-Number(a.total_views)}).forEach(function(x){h+='<tr><td><b>'+x.va_name+'</b></td><td>'+fm(Number(x.total_views))+'</td><td>'+fm(Number(x.total_likes))+'</td><td>'+x.post_count+'/6</td></tr>'});
-h+='</tbody></table></div>';
-h+='<div class="card" style="border-top:2px solid var(--twitter)"><h3>🐦 Twitter — '+tw.length+' VA</h3><table class="tbl"><thead><tr><th>VA</th><th>Vues</th><th>Likes</th><th>Posts</th></tr></thead><tbody>';
-tw.sort(function(a,b){return Number(b.total_views)-Number(a.total_views)}).forEach(function(x){h+='<tr><td><b>'+x.va_name+'</b></td><td>'+fm(Number(x.total_views))+'</td><td>'+fm(Number(x.total_likes))+'</td><td>'+x.post_count+'/6</td></tr>'});
-h+='</tbody></table></div>';
-h+='<div class="card" style="border-top:2px solid var(--green)"><h3>📱 Geelark — '+gl.length+' VA</h3><table class="tbl"><thead><tr><th>VA</th><th>Vues</th><th>Likes</th><th>Posts</th></tr></thead><tbody>';
-gl.sort(function(a,b){return Number(b.total_views)-Number(a.total_views)}).forEach(function(x){h+='<tr><td><b>'+x.va_name+'</b></td><td>'+fm(Number(x.total_views))+'</td><td>'+fm(Number(x.total_likes))+'</td><td>'+x.post_count+'/6</td></tr>'});
-h+='</tbody></table></div></div>';
-document.getElementById('globalArea').innerHTML=h;
-makeChart('globalPie',{type:'doughnut',data:{labels:['Instagram','Twitter','Geelark'],datasets:[{data:[igV,twV,glV],backgroundColor:['rgba(225,48,108,0.8)','rgba(29,161,242,0.8)','rgba(0,200,83,0.8)'],borderWidth:0}]},options:{responsive:true,maintainAspectRatio:false,cutout:'65%',plugins:{legend:{position:'bottom',labels:{color:'#94a3b8',font:{size:11}}}}}});
-makeChart('globalBar',{type:'bar',data:{labels:['Vues','Likes','Posts'],datasets:[{label:'Instagram',data:[igV,igL,igP],backgroundColor:'rgba(225,48,108,0.7)',borderRadius:6},{label:'Twitter',data:[twV,twL,twP],backgroundColor:'rgba(29,161,242,0.7)',borderRadius:6},{label:'Geelark',data:[glV,glL,glP],backgroundColor:'rgba(0,200,83,0.7)',borderRadius:6}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:'#94a3b8',font:{size:11}}}},scales:{x:{grid:{display:false},ticks:{color:'#64748b'}},y:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'#64748b'}}}}})})}
+function loadGlobal(){
+  destroyCharts();
+  if(ALLOWED_PLATS.length<2){document.getElementById('content').innerHTML='<div class="card"><p style="color:var(--text3);text-align:center;padding:40px">La vue Global necessite les deux plateformes (Instagram + Twitter).</p></div>';return}
+  var h=periodButtonsHtml('loadGlobalData');
+  h+='<div id="globalArea"><p style="color:var(--text3);text-align:center;padding:60px">Chargement...</p></div>';
+  document.getElementById('content').innerHTML=h;
+  loadGlobalData();
+}
+
+// Build the URL/strategy to fetch stats per platform based on the global period.
+// For single-day periods we hit /api/stats/:date; for multi-day we hit
+// /api/history/:n and aggregate on the client.
+function buildGlobalFetchPromises(){
+  var p=getGlobalPeriod();
+  var plats=['instagram','twitter','geelark'];
+  if(p==='today'||p==='yesterday'||p==='custom'){
+    var date;
+    if(p==='today')date=dDate(0);
+    else if(p==='yesterday')date=dDate(-1);
+    else {
+      var f=getGlobalDateFrom(),t=getGlobalDateTo();
+      if(f===t){date=f;}
+      else{
+        var n=Math.max(1,Math.round((new Date(t)-new Date(f))/86400000)+1);
+        return {mode:'range',label:f+' → '+t,promises:plats.map(function(pl){
+          return fetch(A+'/api/history/'+n+'?platform='+pl,{headers:{'X-Auth-Token':T}}).then(function(r){return r.json()});
+        })};
+      }
+    }
+    return {mode:'single',label:date,promises:plats.map(function(pl){
+      return fetch(A+'/api/stats/'+date+'?platform='+pl,{headers:{'X-Auth-Token':T}}).then(function(r){return r.json()});
+    })};
+  }
+  if(p==='all'){
+    return {mode:'all',label:'Depuis toujours',promises:plats.map(function(pl){
+      return fetch(A+'/api/all-time-stats?platform='+pl,{headers:{'X-Auth-Token':T}}).then(function(r){return r.json()});
+    })};
+  }
+  var n2=parseInt(p,10)||7;
+  return {mode:'range',label:n2+' derniers jours',promises:plats.map(function(pl){
+    return fetch(A+'/api/history/'+n2+'?platform='+pl,{headers:{'X-Auth-Token':T}}).then(function(r){return r.json()});
+  })};
+}
+
+// Aggregate per-VA totals from a /api/history response (multi-day).
+function aggregateHistory(historyResp){
+  var byVa={};
+  (historyResp.history||[]).forEach(function(day){
+    (day.summaries||[]).forEach(function(s){
+      var key=s.va_discord_id||s.va_name;
+      if(!byVa[key]){
+        byVa[key]={va_discord_id:s.va_discord_id,va_name:s.va_name,total_views:0,total_likes:0,total_comments:0,total_shares:0,post_count:0};
+      }
+      byVa[key].total_views+=Number(s.total_views)||0;
+      byVa[key].total_likes+=Number(s.total_likes)||0;
+      byVa[key].total_comments+=Number(s.total_comments)||0;
+      byVa[key].total_shares+=Number(s.total_shares||0);
+      byVa[key].post_count+=Number(s.post_count)||0;
+    });
+  });
+  return Object.values(byVa);
+}
+
+function loadGlobalData(){
+  destroyCharts();
+  var fetchPlan=buildGlobalFetchPromises();
+  var dateLabel=fetchPlan.label;
+  Promise.all(fetchPlan.promises).then(function(res){
+    var ig,tw,gl;
+    if(fetchPlan.mode==='single'||fetchPlan.mode==='all'){
+      ig=res[0].summaries||[];tw=res[1].summaries||[];gl=res[2].summaries||[];
+    } else {
+      ig=aggregateHistory(res[0]);tw=aggregateHistory(res[1]);gl=aggregateHistory(res[2]);
+    }
+    function sum(arr,k){return arr.reduce(function(a,b){return a+Number(b[k]||0)},0)}
+    var igV=sum(ig,'total_views'),igL=sum(ig,'total_likes'),igP=sum(ig,'post_count');
+    var twV=sum(tw,'total_views'),twL=sum(tw,'total_likes'),twP=sum(tw,'post_count');
+    var glV=sum(gl,'total_views'),glL=sum(gl,'total_likes'),glP=sum(gl,'post_count');
+    var totV=igV+twV+glV,totL=igL+twL+glL,totP=igP+twP+glP;
+    var h='<div class="sec-title">📊 Vue Globale — '+dateLabel+'</div>';
+    h+='<div class="kpis">';
+    h+=kpi('📊',fm(totV),'Vues totales','IG+TW+GL','purple');
+    h+=kpi('❤️',fm(totL),'Likes totaux','','pink');
+    h+=kpi('📝',''+totP,'Posts totaux','','blue');
+    h+=kpi('📸',fm(igV),'Vues Instagram','','pink');
+    h+=kpi('🐦',fm(twV),'Vues Twitter','','blue');
+    h+=kpi('📱',fm(glV),'Vues Geelark','','green');
+    h+='</div>';
+    h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">';
+    h+='<div class="card"><h3><span class="dot" style="background:var(--pink)"></span>Repartition vues</h3><div class="chart-wrap"><canvas id="globalPie"></canvas></div></div>';
+    h+='<div class="card"><h3><span class="dot" style="background:var(--blue)"></span>Comparaison</h3><div class="chart-wrap"><canvas id="globalBar"></canvas></div></div>';
+    h+='</div>';
+    h+='<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px">';
+    h+='<div class="card" style="border-top:2px solid var(--pink)"><h3>📸 Instagram — '+ig.length+' VA</h3><table class="tbl"><thead><tr><th>VA</th><th>Vues</th><th>Likes</th><th>Posts</th></tr></thead><tbody>';
+    ig.sort(function(a,b){return Number(b.total_views)-Number(a.total_views)}).forEach(function(x){h+='<tr><td><b>'+x.va_name+'</b></td><td>'+fm(Number(x.total_views))+'</td><td>'+fm(Number(x.total_likes))+'</td><td>'+x.post_count+'</td></tr>'});
+    h+='</tbody></table></div>';
+    h+='<div class="card" style="border-top:2px solid var(--twitter)"><h3>🐦 Twitter — '+tw.length+' VA</h3><table class="tbl"><thead><tr><th>VA</th><th>Vues</th><th>Likes</th><th>Posts</th></tr></thead><tbody>';
+    tw.sort(function(a,b){return Number(b.total_views)-Number(a.total_views)}).forEach(function(x){h+='<tr><td><b>'+x.va_name+'</b></td><td>'+fm(Number(x.total_views))+'</td><td>'+fm(Number(x.total_likes))+'</td><td>'+x.post_count+'</td></tr>'});
+    h+='</tbody></table></div>';
+    h+='<div class="card" style="border-top:2px solid var(--green)"><h3>📱 Geelark — '+gl.length+' VA</h3><table class="tbl"><thead><tr><th>VA</th><th>Vues</th><th>Likes</th><th>Posts</th></tr></thead><tbody>';
+    gl.sort(function(a,b){return Number(b.total_views)-Number(a.total_views)}).forEach(function(x){h+='<tr><td><b>'+x.va_name+'</b></td><td>'+fm(Number(x.total_views))+'</td><td>'+fm(Number(x.total_likes))+'</td><td>'+x.post_count+'</td></tr>'});
+    h+='</tbody></table></div></div>';
+    document.getElementById('globalArea').innerHTML=h;
+    makeChart('globalPie',{type:'doughnut',data:{labels:['Instagram','Twitter','Geelark'],datasets:[{data:[igV,twV,glV],backgroundColor:['rgba(225,48,108,0.8)','rgba(29,161,242,0.8)','rgba(0,200,83,0.8)'],borderWidth:0}]},options:{responsive:true,maintainAspectRatio:false,cutout:'65%',plugins:{legend:{position:'bottom',labels:{color:'#94a3b8',font:{size:11}}}}}});
+    makeChart('globalBar',{type:'bar',data:{labels:['Vues','Likes','Posts'],datasets:[{label:'Instagram',data:[igV,igL,igP],backgroundColor:'rgba(225,48,108,0.7)',borderRadius:6},{label:'Twitter',data:[twV,twL,twP],backgroundColor:'rgba(29,161,242,0.7)',borderRadius:6},{label:'Geelark',data:[glV,glL,glP],backgroundColor:'rgba(0,200,83,0.7)',borderRadius:6}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:'#94a3b8',font:{size:11}}}},scales:{x:{grid:{display:false},ticks:{color:'#64748b'}},y:{grid:{color:'rgba(255,255,255,0.04)'},ticks:{color:'#64748b'}}}}});
+  }).catch(function(e){
+    document.getElementById('globalArea').innerHTML='<p style="color:var(--red);text-align:center;padding:30px">Erreur: '+(e.message||'?')+'</p>';
+  });
+}
 
 // ==================== VA DETAIL MODAL (with full post timeline) ====================
 function openVA(id,name){
