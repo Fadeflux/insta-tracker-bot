@@ -847,7 +847,13 @@ function loadDashData(){
 }
 
 function loadSingleDayDash(date){
+// Show a loading state immediately so the user sees feedback
+document.getElementById('dashArea').innerHTML='<p style="color:var(--text3);text-align:center;padding:60px">Chargement...</p>';
 af('/api/stats/'+date).then(function(d){
+if(!d||!d.summaries){
+  document.getElementById('dashArea').innerHTML='<div class="card" style="text-align:center;padding:40px;color:var(--red)">Erreur: '+(d&&d.error?d.error:'donnees manquantes')+'</div>';
+  return;
+}
 var s=d.summaries.map(function(x){var tv=Number(x.total_views),tl=Number(x.total_likes),tc=Number(x.total_comments),ts=Number(x.total_shares||0),pc=Number(x.post_count);x.avg_views=pc>0?Math.round(tv/pc):0;x.total_score=tl+tc*3+ts*5;x.engagement_rate=tv>0?((tl+tc)/tv*100).toFixed(1):'0.0';x.badge=x.avg_views>=2000?'top':x.avg_views>=500?'bon':'faible';return x}).sort(function(a,b){return Number(b.total_views)-Number(a.total_views)});
 var tv=0,tl=0,tc=0,ts=0,tp=0,tsc=0;
 s.forEach(function(x){tv+=Number(x.total_views);tl+=Number(x.total_likes);tc+=Number(x.total_comments);ts+=Number(x.total_shares||0);tp+=Number(x.post_count);tsc+=x.total_score});
@@ -927,9 +933,19 @@ if(s.length>0){makeChart('vaBarChart',{type:'bar',data:{labels:s.map(function(x)
 
 // Load streaks into a SEPARATE div — using innerHTML on dashArea would destroy
 // the bar chart canvas (browser re-parses the HTML and Chart.js loses its node).
-af('/api/streaks').then(function(sd){var streaks=sd.streaks.filter(function(s){return s.current_streak>0||s.best_streak>0});if(streaks.length===0)return;var sh='<div class="card"><h3><span class="dot" style="background:var(--orange)"></span>Streaks '+platLabel()+'</h3><table class="tbl"><thead><tr><th>VA</th><th>Streak</th><th>Record</th><th>Status</th></tr></thead><tbody>';streaks.forEach(function(s){var badge=s.current_streak>=10?'🏆 Legendaire':s.current_streak>=5?'🔥 En feu':s.current_streak>=3?'⚡ Motive':s.current_streak>0?'✅ Actif':'💤';var col=s.current_streak>=5?'var(--green)':s.current_streak>=3?'var(--orange)':'var(--text2)';sh+='<tr><td><b>'+s.va_name+'</b></td><td style="color:'+col+';font-weight:700">'+s.current_streak+'j</td><td>'+s.best_streak+'j</td><td>'+badge+'</td></tr>'});sh+='</tbody></table></div>';var sa=document.getElementById('streaksArea');if(sa)sa.innerHTML=sh}).catch(function(){})})}
+af('/api/streaks').then(function(sd){var streaks=sd.streaks.filter(function(s){return s.current_streak>0||s.best_streak>0});if(streaks.length===0)return;var sh='<div class="card"><h3><span class="dot" style="background:var(--orange)"></span>Streaks '+platLabel()+'</h3><table class="tbl"><thead><tr><th>VA</th><th>Streak</th><th>Record</th><th>Status</th></tr></thead><tbody>';streaks.forEach(function(s){var badge=s.current_streak>=10?'🏆 Legendaire':s.current_streak>=5?'🔥 En feu':s.current_streak>=3?'⚡ Motive':s.current_streak>0?'✅ Actif':'💤';var col=s.current_streak>=5?'var(--green)':s.current_streak>=3?'var(--orange)':'var(--text2)';sh+='<tr><td><b>'+s.va_name+'</b></td><td style="color:'+col+';font-weight:700">'+s.current_streak+'j</td><td>'+s.best_streak+'j</td><td>'+badge+'</td></tr>'});sh+='</tbody></table></div>';var sa=document.getElementById('streaksArea');if(sa)sa.innerHTML=sh}).catch(function(){})
+}).catch(function(e){
+  document.getElementById('dashArea').innerHTML='<div class="card" style="text-align:center;padding:40px;color:var(--red)">Erreur de chargement: '+(e&&e.message?e.message:'?')+'</div>';
+})}
 
-function loadMultiDay(days){destroyCharts();af('/api/history/'+days).then(function(d){
+function loadMultiDay(days){destroyCharts();
+// Show a loading state immediately so the user sees something happen on click
+document.getElementById('dashArea').innerHTML='<p style="color:var(--text3);text-align:center;padding:60px">Chargement de '+days+' jours...</p>';
+af('/api/history/'+days).then(function(d){
+if(!d||!d.history){
+  document.getElementById('dashArea').innerHTML='<div class="card" style="text-align:center;padding:40px;color:var(--red)">Erreur: '+(d&&d.error?d.error:'donnees manquantes')+'</div>';
+  return;
+}
 var daily=d.history.map(function(x){var tv=x.summaries.reduce(function(a,b){return a+Number(b.total_views)},0);var tl=x.summaries.reduce(function(a,b){return a+Number(b.total_likes)},0);var tc=x.summaries.reduce(function(a,b){return a+Number(b.total_comments)},0);var tp=x.summaries.reduce(function(a,b){return a+Number(b.post_count)},0);return{date:x.date,views:tv,likes:tl,comments:tc,posts:tp,score:tl+tc*3,eng:tv>0?(tl+tc)/tv*100:0}}).reverse();
 var totV=daily.reduce(function(a,b){return a+b.views},0),totL=daily.reduce(function(a,b){return a+b.likes},0),totC=daily.reduce(function(a,b){return a+b.comments},0),totP=daily.reduce(function(a,b){return a+b.posts},0);
 var avgEng=totV>0?((totL+totC)/totV*100).toFixed(1):'0.0';
@@ -957,7 +973,10 @@ function lineCfg(data,color){return{type:'line',data:{labels:labels,datasets:[{d
 makeChart('evoViews',lineCfg(daily.map(function(x){return x.views}),'rgb(124,58,237)'));
 makeChart('evoLikes',lineCfg(daily.map(function(x){return x.likes}),'rgb(225,48,108)'));
 makeChart('evoEng',lineCfg(daily.map(function(x){return+x.eng.toFixed(2)}),'rgb(16,185,129)'));
-makeChart('evoPosts',lineCfg(daily.map(function(x){return x.posts}),'rgb(59,130,246)'))})}
+makeChart('evoPosts',lineCfg(daily.map(function(x){return x.posts}),'rgb(59,130,246)'))
+}).catch(function(e){
+  document.getElementById('dashArea').innerHTML='<div class="card" style="text-align:center;padding:40px;color:var(--red)">Erreur de chargement: '+(e&&e.message?e.message:'?')+'<br><br><span style="color:var(--text3);font-size:11px">Verifiez les logs Railway pour [history] FAILED</span></div>';
+})}
 
 // All-time view: KPIs + best VA + table (totals since beginning)
 // + 4 trend charts on the last 90 days (sliding window for visual trend).
