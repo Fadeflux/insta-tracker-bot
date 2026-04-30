@@ -343,7 +343,10 @@ function createWebServer() {
       var toDate = req.query.to || null;
       var summaries = await db.getRangeSummaries(fromDate, toDate, platform);
       res.json({ from: fromDate, to: toDate, platform: platform || 'all', summaries: summaries });
-    } catch(err) { res.status(500).json({ error: err.message }); }
+    } catch(err) {
+      console.error('[all-time-stats] FAILED:', err.message, err.stack);
+      res.status(500).json({ error: err.message });
+    }
   });
 
   app.get('/api/history/:days', checkAuth, async function(req, res) {
@@ -388,7 +391,11 @@ function createWebServer() {
       });
 
       res.json({ date: date, platform: platform || 'all', rankings: rankings });
-    } catch(err) { res.status(500).json({ error: err.message }); }
+    } catch(err) {
+      console.error('[leaderboard] FAILED:', err.message);
+      console.error(err.stack);
+      res.status(500).json({ error: err.message });
+    }
   });
 
   app.get('/api/compare', checkAuth, async function(req, res) {
