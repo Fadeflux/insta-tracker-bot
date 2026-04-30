@@ -466,7 +466,11 @@ function createWebServer() {
       }
 
       res.json(recs);
-    } catch(err) { res.status(500).json({ error: err.message }); }
+    } catch(err) {
+      console.error('[recommendations] FAILED:', err.message);
+      console.error(err.stack);
+      res.status(500).json({ error: err.message });
+    }
   });
 
   app.get('/api/saved-posts', checkAuth, async function(req, res) {
