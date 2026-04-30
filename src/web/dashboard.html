@@ -1259,6 +1259,16 @@ function loadRecoData(){
 
 function renderReco(){
   var d=window.RECO_DATA;if(!d)return;
+  // Defensive: if the API returned an error or empty data, show a clear message
+  // instead of crashing on `d.kpis.perfCount`.
+  if(d.error){
+    document.getElementById('recoArea').innerHTML='<div class="card" style="text-align:center;padding:40px;color:var(--red)">Erreur API: '+escapeHtml(d.error)+'</div>';
+    return;
+  }
+  if(!d.kpis){
+    document.getElementById('recoArea').innerHTML='<div class="card" style="text-align:center;padding:40px;color:var(--text3)">Aucune donnee disponible pour cette periode.</div>';
+    return;
+  }
   var va=window.RECO_VA||'all';
 
   // Compute KPIs/distribution either from full data or filtered by VA.
