@@ -736,15 +736,18 @@ async function getRecommendations(dateOrPeriod, platform) {
 
   // Build SQL date filter — supports null (no lower bound = since forever)
   function buildDateFilter(prefix, paramOffset) {
-    // prefix: "p." or "" depending on table alias
+    // prefix: "p." or "" depending on table alias.
+    // CRITICAL: the prefix must go INSIDE the parenthesis. PostgreSQL syntax
+    // is `(p.created_at AT TIME ZONE 'X')::date`, NOT `p.(created_at AT TIME ZONE 'X')::date`.
+    // The latter generates "syntax error at or near '('".
     if (fromDate && toDate) {
       return {
-        clause: prefix + "(created_at AT TIME ZONE 'Africa/Porto-Novo')::date >= $" + paramOffset + ' AND ' + prefix + "(created_at AT TIME ZONE 'Africa/Porto-Novo')::date <= $" + (paramOffset + 1),
+        clause: "(" + prefix + "created_at AT TIME ZONE 'Africa/Porto-Novo')::date >= $" + paramOffset + ' AND (' + prefix + "created_at AT TIME ZONE 'Africa/Porto-Novo')::date <= $" + (paramOffset + 1),
         params: [fromDate, toDate],
       };
     } else if (toDate) {
       return {
-        clause: prefix + "(created_at AT TIME ZONE 'Africa/Porto-Novo')::date <= $" + paramOffset,
+        clause: "(" + prefix + "created_at AT TIME ZONE 'Africa/Porto-Novo')::date <= $" + paramOffset,
         params: [toDate],
       };
     }
