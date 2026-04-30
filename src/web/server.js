@@ -108,6 +108,21 @@ function calcAdvancedScore(s) {
   return Math.round((eng * 100) * Math.log10(v) * 100) / 100;
 }
 
+// Compute today's date in YYYY-MM-DD format, in the team's working timezone
+// (Africa/Porto-Novo / Bénin / UTC+1). Pure JS — no DB roundtrip.
+// Used everywhere that previously called `todayBenin()`,
+// which returned UTC and could be off by 1 day around midnight local time.
+function todayBenin() {
+  var parts = new Intl.DateTimeFormat('fr-CA', {
+    timeZone: 'Africa/Porto-Novo',
+    year: 'numeric', month: '2-digit', day: '2-digit'
+  }).formatToParts(new Date());
+  var y = parts.find(function(p){return p.type==='year'}).value;
+  var m = parts.find(function(p){return p.type==='month'}).value;
+  var d = parts.find(function(p){return p.type==='day'}).value;
+  return y + '-' + m + '-' + d;
+}
+
 // Get effective platform for queries (user's platform or requested)
 function getEffectivePlatform(req) {
   var requested = req.query.platform;
@@ -220,7 +235,7 @@ function createWebServer() {
   app.get('/api/today', checkAuth, async function(req, res) {
     try {
       var platform = getEffectivePlatform(req);
-      var today = new Date().toISOString().split('T')[0];
+      var today = todayBenin();
       await db.computeDailySummary(today, platform);
       var summaries = await db.getDailySummaries(today, platform);
       var activePosts = await db.getActivePosts(platform);
@@ -255,7 +270,7 @@ function createWebServer() {
       var fromDate = req.query.from;
       var toDate = req.query.to;
       var allTime = req.query.all === '1';
-      var date = req.query.date || new Date().toISOString().split('T')[0];
+      var date = req.query.date || todayBenin();
 
       // Decide which post fetch strategy to use:
       //   - all=1                → all posts ever
@@ -335,23 +350,31 @@ function createWebServer() {
     try {
       var platform = getEffectivePlatform(req);
       var days = parseInt(req.params.days) || 7;
+      var todayStr = todayBenin();
       var results = [];
       for (var i = 0; i < days; i++) {
-        var d = new Date();
-        d.setDate(d.getDate() - i);
-        var date = d.toISOString().split('T')[0];
+        // Compute YYYY-MM-DD by subtracting i days from today (in Benin TZ).
+        // We use SQL date arithmetic to avoid JS Date / UTC pitfalls.
+        var dateRow = await db.pool.query(
+          "SELECT TO_CHAR(($1::date - $2::int), 'YYYY-MM-DD') AS d",
+          [todayStr, i]
+        );
+        var date = dateRow.rows[0].d;
         await db.computeDailySummary(date, platform);
         var summaries = await db.getDailySummaries(date, platform);
         results.push({ date: date, summaries: summaries });
       }
       res.json({ days: days, platform: platform || 'all', history: results });
-    } catch(err) { res.status(500).json({ error: err.message }); }
+    } catch(err) {
+      console.error('[history] FAILED:', err.message, err.stack);
+      res.status(500).json({ error: err.message });
+    }
   });
 
   app.get('/api/leaderboard', checkAuth, async function(req, res) {
     try {
       var platform = getEffectivePlatform(req);
-      var date = req.query.date || new Date().toISOString().split('T')[0];
+      var date = req.query.date || todayBenin();
       await db.computeDailySummary(date, platform);
       var rankings = await db.getLeaderboard(date, platform);
 
@@ -405,7 +428,7 @@ function createWebServer() {
       // Or ?period=today|7d|15d|30d|all (relative range)
       // Or ?from=YYYY-MM-DD&to=YYYY-MM-DD (custom range)
       var dateOrPeriod;
-      var todayStr = new Date().toISOString().split('T')[0];
+      var todayStr = todayBenin();
       function daysAgo(n) {
         var d = new Date();
         d.setUTCDate(d.getUTCDate() - n);
@@ -648,7 +671,7 @@ function createWebServer() {
         platform = allowed[0] || 'instagram';
       }
 
-      var today = new Date().toISOString().split('T')[0];
+      var today = todayBenin();
 
       // Ensure today's daily summary is fresh, then fetch it for ranking
       await db.computeDailySummary(today, platform);
