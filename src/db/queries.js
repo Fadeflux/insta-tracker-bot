@@ -248,8 +248,15 @@ async function computeDailySummary(date, platform) {
     // created at 1am local time is correctly attributed to that calendar day,
     // not to the previous UTC day. PostgreSQL's `AT TIME ZONE` converts
     // a TIMESTAMPTZ to a TIMESTAMP at the specified zone before casting to date.
+    //
+    // IMPORTANT: GROUP BY ONLY on va_discord_id (not va_name). If a VA's display
+    // name changed between two posts (e.g. "Marie" → "Marie [TOP]"), grouping
+    // by both columns would produce two rows with the same (va_discord_id,
+    // date, platform) tuple — and ON CONFLICT can only resolve one conflict per
+    // row, causing the dreaded "ON CONFLICT DO UPDATE command cannot affect
+    // row a second time" error. We pick MAX(va_name) (any name) for display.
     var sql = "INSERT INTO daily_summaries (va_discord_id, va_name, date, platform, post_count, total_views, total_likes, total_comments, total_shares) " +
-      "SELECT p.va_discord_id, p.va_name, $1::date, $3, COUNT(DISTINCT p.id), " +
+      "SELECT p.va_discord_id, MAX(p.va_name), $1::date, $3, COUNT(DISTINCT p.id), " +
       "       COALESCE(SUM(latest.views), 0), COALESCE(SUM(latest.likes), 0), " +
       "       COALESCE(SUM(latest.comments), 0), COALESCE(SUM(latest.shares), 0) " +
       "FROM posts p " +
@@ -257,8 +264,10 @@ async function computeDailySummary(date, platform) {
       "WHERE p.deleted_at IS NULL " +
       "  AND (p.created_at AT TIME ZONE 'Africa/Porto-Novo')::date = $1::date " +
       "  AND p.platform = $2 " +
-      "GROUP BY p.va_discord_id, p.va_name " +
+      "  AND p.va_discord_id IS NOT NULL " +
+      "GROUP BY p.va_discord_id " +
       "ON CONFLICT (va_discord_id, date, platform) DO UPDATE SET " +
+      "  va_name = EXCLUDED.va_name, " +
       "  post_count = EXCLUDED.post_count, total_views = EXCLUDED.total_views, " +
       "  total_likes = EXCLUDED.total_likes, total_comments = EXCLUDED.total_comments, " +
       "  total_shares = EXCLUDED.total_shares " +
