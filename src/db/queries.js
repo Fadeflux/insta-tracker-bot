@@ -1,5 +1,24 @@
-const { pool } = require('./init');
+const { pool: rawPool } = require('./init');
 const logger = require('../utils/logger');
+
+// Wrap pool.query() so every SQL error logs both the message AND the failing
+// query/parameters. This is essential to debug errors like "syntax error at
+// or near (" that don't tell you which of the dozens of queries is the
+// culprit. The wrapper is fully transparent — it returns the same Promise.
+const pool = {
+  query: function(text, params) {
+    return rawPool.query(text, params).catch(function(err) {
+      console.error('[SQL ERROR]', err.message);
+      console.error('[SQL TEXT]', text);
+      if (params) console.error('[SQL PARAMS]', JSON.stringify(params));
+      throw err;
+    });
+  },
+  // Expose the raw pool for cases where someone needs the connection itself
+  // (transactions, listeners, etc.) — not used by query callers.
+  connect: function() { return rawPool.connect.apply(rawPool, arguments); },
+  end: function() { return rawPool.end.apply(rawPool, arguments); },
+};
 
 // Performance thresholds (configurable via env)
 var VIRAL_VIEWS = parseInt(process.env.VIRAL_VIEWS || '5000');
