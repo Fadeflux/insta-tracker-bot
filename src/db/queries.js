@@ -15,7 +15,7 @@ const pool = {
     });
   },
   // Expose the raw pool for cases where someone needs the connection itself
-  // (transactions, listeners, etc.) — not used by query callers.
+  // (transactions, listeners, etc.) — not used by query caallers.
   connect: function() { return rawPool.connect.apply(rawPool, arguments); },
   end: function() { return rawPool.end.apply(rawPool, arguments); },
 };
