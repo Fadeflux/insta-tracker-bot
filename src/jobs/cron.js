@@ -177,10 +177,16 @@ function initCronJobs(client) {
     try { await runForEachPlatform(runWeeklyCeremony); } catch (err) { console.error('Weekly ceremony failed', err.message); }
   }, { timezone: 'Africa/Porto-Novo' });
 
-  // Dashboard user revocation sweep — every 6 hours (02h, 08h, 14h, 20h Europe/Paris)
-  cron.schedule('0 2,8,14,20 * * *', async function() {
-    try { await sweepDashboardUsers(); } catch (err) { console.error('Dashboard revocation sweep failed', err.message); }
-  }, { timezone: 'Africa/Porto-Novo' });
+  // Dashboard user revocation sweep — DISABLED automatic schedule.
+  // We previously revoked dashboard access automatically every 6h when a user
+  // had lost their Discord role, but this caused false-positive revocations
+  // for users who were still active (e.g. a manager who genuinely used the
+  // dashboard yesterday but happened to lose a role today).
+  // The admin can still trigger a sweep manually from the dashboard's admin
+  // panel ("Sweep Discord" button) when they want to clean up explicitly.
+  // cron.schedule('0 2,8,14,20 * * *', async function() {
+  //   try { await sweepDashboardUsers(); } catch (err) { console.error('Dashboard revocation sweep failed', err.message); }
+  // }, { timezone: 'Africa/Porto-Novo' });
 
   // Viral post notifications — every 10 min
   cron.schedule('*/10 * * * *', async function() {
