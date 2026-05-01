@@ -2085,6 +2085,11 @@ var filteredAccs=accs.filter(function(a){
     if(hay.indexOf(q)===-1)return false;
   }
   return true;
+}).sort(function(a,b){
+  // Sort by total views descending — best-performing accounts at the top.
+  // This makes it easy to spot the "winners" within a VA's account portfolio
+  // and identify which accounts are pulling the weight.
+  return Number(b.total_views||0)-Number(a.total_views||0);
 });
 
 if(filteredAccs.length===0){
