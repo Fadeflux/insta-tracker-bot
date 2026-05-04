@@ -15,6 +15,7 @@ var platforms = {
       viral: process.env.CHANNEL_VIRAL_INSTAGRAM,
     },
     managerRoleId: process.env.MANAGER_ROLE_ID_INSTAGRAM || process.env.MANAGER_ROLE_ID,
+    teamLeaderRoleId: process.env.TEAM_LEADER_ROLE_ID_INSTAGRAM || process.env.TEAM_LEADER_ROLE_ID,
     vaRoleId: process.env.VA_ROLE_ID_INSTAGRAM || process.env.VA_ROLE_ID,
   },
   twitter: {
@@ -30,6 +31,7 @@ var platforms = {
       viral: process.env.CHANNEL_VIRAL_TWITTER,
     },
     managerRoleId: process.env.MANAGER_ROLE_ID_TWITTER,
+    teamLeaderRoleId: process.env.TEAM_LEADER_ROLE_ID_TWITTER,
     vaRoleId: process.env.VA_ROLE_ID_TWITTER,
   },
   geelark: {
@@ -45,6 +47,7 @@ var platforms = {
       viral: process.env.CHANNEL_VIRAL_GEELARK,
     },
     managerRoleId: process.env.MANAGER_ROLE_ID_GEELARK,
+    teamLeaderRoleId: process.env.TEAM_LEADER_ROLE_ID_GEELARK,
     vaRoleId: process.env.VA_ROLE_ID_GEELARK,
   },
   threads: {
@@ -60,6 +63,7 @@ var platforms = {
       viral: process.env.CHANNEL_VIRAL_THREADS,
     },
     managerRoleId: process.env.MANAGER_ROLE_ID_THREADS,
+    teamLeaderRoleId: process.env.TEAM_LEADER_ROLE_ID_THREADS,
     vaRoleId: process.env.VA_ROLE_ID_THREADS,
   },
 };
