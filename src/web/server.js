@@ -1390,6 +1390,37 @@ function createWebServer() {
     }
   });
 
+  // === RECOMPUTE: rebuild daily_summaries from scratch for the last N days ===
+  // Useful after manual DB cleanup (e.g. you deleted test posts but the cached
+  // daily_summaries still show their views in the leaderboard). This recomputes
+  // the cache from the source-of-truth tables (posts + snapshots).
+  app.post('/api/admin/recompute-summaries', checkAuth, checkAdmin, async function(req, res) {
+    try {
+      var days = Math.min(parseInt(req.body && req.body.days) || 30, 365);
+      var pool = db.pool;
+      // Get the list of dates to recompute (in Bénin TZ).
+      var datesResult = await pool.query(
+        "SELECT TO_CHAR(NOW() AT TIME ZONE 'Africa/Porto-Novo' - (n || ' days')::interval, 'YYYY-MM-DD') AS d " +
+        "FROM generate_series(0, $1::int - 1) n",
+        [days]
+      );
+      var platforms = ['instagram', 'twitter', 'geelark', 'threads'];
+      var recomputed = 0;
+      for (var i = 0; i < datesResult.rows.length; i++) {
+        var date = datesResult.rows[i].d;
+        for (var p = 0; p < platforms.length; p++) {
+          await db.computeDailySummary(date, platforms[p]);
+          recomputed++;
+        }
+      }
+      console.log('[Admin] recompute-summaries: rebuilt ' + recomputed + ' day×platform entries over the last ' + days + ' days');
+      res.json({ success: true, days: days, recomputed: recomputed });
+    } catch(err) {
+      console.error('[Admin] recompute-summaries failed:', err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // === In-app notifications (bell icon) ===
   // List recent notifications, optionally filtered by platform.
   app.get('/api/notifications', checkAuth, async function(req, res) {
