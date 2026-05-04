@@ -34,16 +34,20 @@ function buildMessage(opts) {
   var emoji, header, urgency;
   if (threshold >= 100000) {
     emoji = '🚀🚀🚀'; header = 'POST EXCEPTIONNEL — 100K+ VUES';
-    urgency = 'C\'est une pepite enorme. A REPOSTER IMMEDIATEMENT sur le meme compte avec changement de metadonnes.';
+    urgency = 'Ce post est a refaire EN URGENCE sur le meme compte avec un changement de metadonnees sur la video.\n' +
+              'Renvoie la video au manager, on va te la redonner avec les metadonnees changees.';
   } else if (threshold >= 50000) {
     emoji = '🔥🔥'; header = 'POST EN FEU — 50K+ VUES';
-    urgency = 'Vraiment tres bonne perf. A reposter au plus vite sur le meme compte avec changement de metadonnes.';
+    urgency = 'Ce post est a refaire au plus vite sur le meme compte avec un changement de metadonnees sur la video.\n' +
+              'Renvoie la video au manager, on va te la redonner avec les metadonnees changees.';
   } else if (threshold >= 20000) {
     emoji = '🔥'; header = 'POST VIRAL — 20K+ VUES';
-    urgency = 'Bien joue ! A reposter rapidement sur le meme compte avec changement de metadonnes.';
+    urgency = 'Ce post est a refaire sur le meme compte avec un changement de metadonnees sur la video.\n' +
+              'Renvoie la video au manager, on va te la redonner avec les metadonnees changees.';
   } else {
     emoji = '✨'; header = 'POST EN BOOST — 8K+ VUES';
-    urgency = 'Continue comme ca. A reposter sur le meme compte avec changement de metadonnes.';
+    urgency = 'Ce post est a refaire sur le meme compte avec un changement de metadonnees sur la video.\n' +
+              'Renvoie la video au manager, on va te la redonner avec les metadonnees changees.';
   }
   // Format stats lines, using non-breaking thousand separators
   function fm(n) { return Number(n || 0).toLocaleString('fr-FR'); }
