@@ -32,22 +32,28 @@ function buildMessage(opts) {
   var vaMention = opts.vaMention;       // "<@123>" or fallback to "@username"
   var managerMention = opts.managerMention; // "<@&456>" or "@manager"
   var emoji, header, urgency;
+  // Common instructions for all tiers — only the urgency word changes.
+  // Format: "Ce post est a refaire {URGENCY} sur le meme compte..."
+  function buildInstructions(urgencyWord) {
+    return 'Ce post est a refaire ' + urgencyWord + ' sur le meme compte avec un changement de metadonnees sur la video.\n' +
+           'Mets la video dans un drive et envoie-nous le lien du drive pour qu\'on puisse te changer les metadonnees.\n' +
+           'Ensuite tu referas la meme video d\'ici 1-2 jours.';
+  }
   if (threshold >= 100000) {
     emoji = '🚀🚀🚀'; header = 'POST EXCEPTIONNEL — 100K+ VUES';
-    urgency = 'Ce post est a refaire EN URGENCE sur le meme compte avec un changement de metadonnees sur la video.\n' +
-              'Renvoie la video au manager, on va te la redonner avec les metadonnees changees.';
+    urgency = buildInstructions('EN URGENCE');
   } else if (threshold >= 50000) {
     emoji = '🔥🔥'; header = 'POST EN FEU — 50K+ VUES';
-    urgency = 'Ce post est a refaire au plus vite sur le meme compte avec un changement de metadonnees sur la video.\n' +
-              'Renvoie la video au manager, on va te la redonner avec les metadonnees changees.';
+    urgency = buildInstructions('au plus vite');
   } else if (threshold >= 20000) {
     emoji = '🔥'; header = 'POST VIRAL — 20K+ VUES';
-    urgency = 'Ce post est a refaire sur le meme compte avec un changement de metadonnees sur la video.\n' +
-              'Renvoie la video au manager, on va te la redonner avec les metadonnees changees.';
+    urgency = buildInstructions('rapidement');
   } else {
     emoji = '✨'; header = 'POST EN BOOST — 8K+ VUES';
-    urgency = 'Ce post est a refaire sur le meme compte avec un changement de metadonnees sur la video.\n' +
-              'Renvoie la video au manager, on va te la redonner avec les metadonnees changees.';
+    urgency = buildInstructions('');
+    // For the 8k tier, drop the leading "EN URGENCE/au plus vite/rapidement"
+    // to keep the message neutral. Strip the double space left by the empty arg.
+    urgency = urgency.replace('Ce post est a refaire  sur', 'Ce post est a refaire sur');
   }
   // Format stats lines, using non-breaking thousand separators
   function fm(n) { return Number(n || 0).toLocaleString('fr-FR'); }
