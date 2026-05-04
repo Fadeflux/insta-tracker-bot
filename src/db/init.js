@@ -368,6 +368,18 @@ DO $$ BEGIN
   CREATE INDEX IF NOT EXISTS idx_notif_platform_time ON notifications(platform, created_at DESC);
   CREATE INDEX IF NOT EXISTS idx_notif_post ON notifications(post_id);
 
+  -- Track which viral thresholds have already been announced in the VA's
+  -- ticket channel. We only fire once per (post, threshold) so the manager
+  -- isn't spammed with duplicate alerts on every scrape that confirms the
+  -- view count is still above the threshold. Keyed on (post_id, threshold)
+  -- so each milestone (8k, 20k, 50k, 100k) is announced exactly once.
+  CREATE TABLE IF NOT EXISTS post_viral_milestones_sent (
+    post_id     INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+    threshold   INTEGER NOT NULL,
+    sent_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (post_id, threshold)
+  );
+
   -- Per-user read state. We don't want to spam every user with the same notif
   -- counter, so each dashboard user has their own "last read" timestamp per
   -- platform. Notifs newer than this timestamp count as unread.
