@@ -199,6 +199,19 @@ var scrapeWorker = new Worker(
       logger.warn('[Notif] insert failed: ' + notifErr.message);
     }
 
+    // === TICKET VIRAL NOTIFIER ===
+    // When a post crosses the 8k/20k/50k/100k view tier, post a callout
+    // in the VA's ticket channel and ping the manager role so they can ask
+    // the VA to repost the same video on the same account (with metadata
+    // changes). Wrapped in its own try/catch so a Discord/permission error
+    // never blocks the scrape pipeline.
+    try {
+      var ticketViralNotifier = require('./ticketViralNotifier');
+      await ticketViralNotifier.maybeNotifyMilestone(post, stats, db);
+    } catch (tvnErr) {
+      logger.warn('[ViralTicket] notifier failed: ' + tvnErr.message);
+    }
+
     await notifyQueue.add('hourly-update', {
       postId: postId,
       currentStats: stats,
