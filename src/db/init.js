@@ -339,15 +339,16 @@ DO $$ BEGIN
     ALTER TABLE dashboard_users ADD COLUMN last_check_at TIMESTAMPTZ;
   END IF;
 
-  -- Migration: extend tracking_end for posts created in the last 72h that were
-  -- truncated to 23h59 of their creation day. Catches up posts whose tracking
-  -- ended too early. Only updates posts still within their natural 72h window.
+  -- Migration: extend tracking_end to 7 days for posts created in the last 7
+  -- days. Catches up posts that were created when the window was 72h, so we
+  -- don't lose tracking on posts still in their growth phase. Only updates
+  -- posts whose tracking_end is shorter than the new 7-day standard.
   UPDATE posts
-  SET tracking_end = created_at + INTERVAL '72 hours',
+  SET tracking_end = created_at + INTERVAL '7 days',
       status = 'active'
-  WHERE created_at >= NOW() - INTERVAL '72 hours'
+  WHERE created_at >= NOW() - INTERVAL '7 days'
     AND deleted_at IS NULL
-    AND tracking_end < created_at + INTERVAL '72 hours';
+    AND tracking_end < created_at + INTERVAL '7 days';
 
   -- In-app notifications. Stored per platform so the dashboard can filter on
   -- whatever the user is currently viewing. We don't need them to be very
