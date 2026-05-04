@@ -1300,38 +1300,13 @@ async function checkUserStillValid(discordId, role, platform) {
   return { valid: true };
 }
 
-// Try to DM the user and post a note in admin channels when revocation happens.
+// Notification on revocation — DISABLED.
+// The user requested that all dashboard user lifecycle decisions be made
+// manually from the admin panel; the bot should not contact users by DM nor
+// post in alert channels when access is revoked. Kept as a no-op so callers
+// (sweepDashboardUsers, manual revoke endpoints) don't need to be rewired.
 async function notifyRevocation(user, reason) {
-  // DM the user if possible — gives them a chance to contact admin if it's a mistake
-  if (user.discord_id) {
-    try {
-      var u = await discordClient.users.fetch(user.discord_id);
-      await u.send({
-        content: '🔒 **Acces dashboard Shinra revoque**\n\n' +
-          'Ton compte dashboard (**' + user.username + '**) vient d\'etre desactive automatiquement.\n\n' +
-          'Raison : ' + reason + '\n\n' +
-          'Si tu penses que c\'est une erreur, contacte un admin pour reactiver ton acces.'
-      });
-    } catch (e) {
-      // DM failed (user blocked bot or left server) — silent no-op
-    }
-  }
-
-  // Log in the first available alerts channel we have access to
-  try {
-    var platforms = config.getActivePlatforms();
-    for (var i = 0; i < platforms.length; i++) {
-      var ch = await getChannel(platforms[i], 'alerts');
-      if (ch) {
-        await ch.send({
-          content: '🔒 **Revocation automatique** — compte dashboard `' + user.username + '` desactive.\n' +
-            'Raison : ' + reason + '\n' +
-            'Role : ' + user.role + ' · Plateforme : ' + user.platform
-        });
-        break; // Only post in one channel to avoid noise
-      }
-    }
-  } catch (e) {}
+  // Intentional no-op. To re-enable, restore the previous DM + channel logic.
 }
 
 module.exports = { initCronJobs: initCronJobs, sendDailySummaryForPlatform: sendDailySummaryForPlatform, sendVaDM: sendVaDM, sweepDashboardUsers: sweepDashboardUsers, runWeeklyCeremony: runWeeklyCeremony, getDiscordClient: function() { return discordClient; } };
