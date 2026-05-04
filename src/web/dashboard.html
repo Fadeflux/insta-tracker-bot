@@ -1644,7 +1644,6 @@ h+='</div>';
 h+='<div style="display:flex;gap:10px;flex-wrap:wrap">';
 h+='<button class="btn-sm btn-off" onclick="runForceDuels()" style="padding:9px 14px;font-size:12px;font-weight:700">🎮 Forcer duels + champion</button>';
 h+='<button class="btn-sm btn-off" onclick="runForceSummary()" style="padding:9px 14px;font-size:12px;font-weight:700">📊 Forcer resume du jour</button>';
-h+='<button class="btn-sm btn-off" onclick="runSweep()" style="padding:9px 14px;font-size:12px;font-weight:700">🔄 Sweep Discord</button>';
 h+='<button class="btn-sm btn-off" onclick="runForceScrapeToday()" style="padding:9px 14px;font-size:12px;font-weight:700">⚡ Forcer scrape aujourd\'hui</button>';
 h+='<button class="btn-sm btn-off" onclick="runDiagToday()" style="padding:9px 14px;font-size:12px;font-weight:700">🔍 Diagnostic vues du jour</button>';
 h+='</div>';
@@ -1781,15 +1780,6 @@ if(!el)return;
 el.style.color=color||'var(--text3)';
 el.textContent=text;
 }
-
-function runSweep(){
-if(!confirm('Lancer le sweep Discord maintenant ?\nTous les utilisateurs DB lies a un Discord ID seront verifies. Ceux qui ne sont plus dans le serveur ou ont perdu leur role seront revoques.'))return;
-var btn=event.target;var oldText=btn.textContent;btn.textContent='⏳ En cours...';btn.disabled=true;
-setAdmActionMsg('Sweep en cours...','var(--text3)');
-fetch(A+'/api/admin/sweep-users',{method:'POST',headers:{'X-Auth-Token':T}}).then(function(r){return r.json()}).then(function(d){
-btn.textContent=oldText;btn.disabled=false;
-if(d.success){setAdmActionMsg('✓ Sweep termine. '+(d.message||''),'var(--green)');loadUserList();loadRevokedList()}
-else{setAdmActionMsg('✗ '+(d.error||'Erreur lors du sweep'),'var(--red)')}}).catch(function(e){btn.textContent=oldText;btn.disabled=false;setAdmActionMsg('✗ '+e.message,'var(--red)')})}
 
 // === FORCE SCRAPE: re-scrape every post created today ===
 // Useful right after a Railway redeploy when delayed jobs were lost. Posts
@@ -2072,8 +2062,21 @@ var searchVal=ACC_SEARCH||'';
 var filterBadge='';
 if(ACC_FILTER_VA){filterBadge='<span style="display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:14px;background:var(--purple);color:#fff;font-size:11px;font-weight:700;margin-left:10px">Filtre VA: '+escapeHtml(ACC_FILTER_VA)+' <span style="cursor:pointer;opacity:0.7" onclick="clearAccFilter()">✕</span></span>';}
 h+='<div class="card"><h3><span class="dot"></span>Tous les comptes'+filterBadge+'</h3>';
-h+='<div style="margin-bottom:14px"><input type="text" id="acc_search" placeholder="🔍 Chercher par compte (@xxx) ou VA..." value="'+escapeHtml(searchVal)+'" oninput="onAccSearch(this.value)" style="width:100%;max-width:380px;padding:10px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:13px;outline:none;font-family:inherit"></div>';
-h+='<table class="tbl"><thead><tr><th>Compte</th><th>Plateforme</th><th>VA</th><th>Sante</th><th>Shadowban</th><th>Statut</th><th>Posts</th><th>Posts 7j</th><th>Vues</th><th>Dernier post</th><th>Action</th></tr></thead><tbody>';
+h+='<div style="margin-bottom:14px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">';
+h+='<input type="text" id="acc_search" placeholder="🔍 Chercher par compte (@xxx) ou VA..." value="'+escapeHtml(searchVal)+'" oninput="onAccSearch(this.value)" style="flex:1;min-width:280px;max-width:380px;padding:10px 14px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:13px;outline:none;font-family:inherit">';
+// Sort toggle: 7 jours / Total. Default = 7d (most useful for spotting current performers).
+// We persist the choice in window so it survives re-renders within the same session.
+if(!window.ACC_SORT)window.ACC_SORT='7d';
+h+='<div style="display:inline-flex;background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:3px;font-size:11px">';
+h+='<button onclick="setAccSort(\'7d\')" style="padding:6px 14px;border:none;border-radius:7px;cursor:pointer;font-weight:700;'+(window.ACC_SORT==='7d'?'background:var(--purple);color:#fff':'background:transparent;color:var(--text3)')+'">7 jours</button>';
+h+='<button onclick="setAccSort(\'total\')" style="padding:6px 14px;border:none;border-radius:7px;cursor:pointer;font-weight:700;'+(window.ACC_SORT==='total'?'background:var(--purple);color:#fff':'background:transparent;color:var(--text3)')+'">Total</button>';
+h+='</div>';
+h+='<span style="color:var(--text3);font-size:11px">Trier par vues</span>';
+h+='</div>';
+// Header row: arrow indicator on the active sort column
+var arrow7d=window.ACC_SORT==='7d'?' <span style="color:var(--purple)">▼</span>':'';
+var arrowTot=window.ACC_SORT==='total'?' <span style="color:var(--purple)">▼</span>':'';
+h+='<table class="tbl"><thead><tr><th>Compte</th><th>Plateforme</th><th>VA</th><th>Sante</th><th>Shadowban</th><th>Statut</th><th>Posts</th><th>Posts 7j</th><th>Vues 7j'+arrow7d+'</th><th>Vues total'+arrowTot+'</th><th>Dernier post</th><th>Action</th></tr></thead><tbody>';
 
 // Apply filters (VA selection + text search)
 var filteredAccs=accs.filter(function(a){
@@ -2086,14 +2089,17 @@ var filteredAccs=accs.filter(function(a){
   }
   return true;
 }).sort(function(a,b){
-  // Sort by total views descending — best-performing accounts at the top.
-  // This makes it easy to spot the "winners" within a VA's account portfolio
-  // and identify which accounts are pulling the weight.
+  // Sort by the chosen metric (7d views or total views). 7d is the default
+  // because it surfaces accounts currently performing — more actionable than
+  // historical totals which mostly reflect account age.
+  if(window.ACC_SORT==='7d'){
+    return Number(b.views_7d||0)-Number(a.views_7d||0);
+  }
   return Number(b.total_views||0)-Number(a.total_views||0);
 });
 
 if(filteredAccs.length===0){
-  h+='<tr><td colspan="11" style="text-align:center;padding:30px;color:var(--text3)">Aucun compte trouve avec ce filtre.</td></tr>';
+  h+='<tr><td colspan="12" style="text-align:center;padding:30px;color:var(--text3)">Aucun compte trouve avec ce filtre.</td></tr>';
 }else{
 filteredAccs.forEach(function(a){
 var plEmj=a.platform==='twitter'?'🐦':a.platform==='geelark'?'📱':a.platform==='threads'?'🧵':'📸';
@@ -2124,7 +2130,10 @@ var sbLbl=sbLabels[a.shadowban_diagnosis]||a.shadowban_diagnosis;
 var sbTip='Diagnostic: '+a.shadowban_diagnosis+' (score '+a.shadowban_score+'/100)\nVues: -'+a.views_drop_pct+'%\nEngagement rate: -'+a.engagement_drop_pct+'%';
 sbCell='<span title="'+escapeHtml(sbTip)+'" style="display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:10px;background:'+sbColor+'20;color:'+sbColor+';font-weight:700;font-size:10px;cursor:help">'+sbLbl+' '+a.shadowban_score+'</span>';
 }
-h+='<tr onclick="openAccountDetail('+a.id+')"><td><b>@'+escapeHtml(a.username)+'</b></td><td>'+plEmj+' '+a.platform+'</td><td>'+escapeHtml(a.va_name||'-')+'</td><td>'+healthCell+'</td><td>'+sbCell+'</td><td>'+statusHtml+'</td><td>'+fm(Number(a.total_posts))+'</td><td>'+fm(Number(a.posts_7d))+'</td><td>'+fm(Number(a.total_views))+'</td><td class="'+daysCls+'">'+daysTxt+'</td><td>'+toggleBtn+'</td></tr>';
+// Highlight the active sort column with a subtle purple tint
+var hl7d=window.ACC_SORT==='7d'?'font-weight:700;color:var(--purple)':'';
+var hlTot=window.ACC_SORT==='total'?'font-weight:700;color:var(--purple)':'';
+h+='<tr onclick="openAccountDetail('+a.id+')"><td><b>@'+escapeHtml(a.username)+'</b></td><td>'+plEmj+' '+a.platform+'</td><td>'+escapeHtml(a.va_name||'-')+'</td><td>'+healthCell+'</td><td>'+sbCell+'</td><td>'+statusHtml+'</td><td>'+fm(Number(a.total_posts))+'</td><td>'+fm(Number(a.posts_7d))+'</td><td style="'+hl7d+'">'+fm(Number(a.views_7d||0))+'</td><td style="'+hlTot+'">'+fm(Number(a.total_views))+'</td><td class="'+daysCls+'">'+daysTxt+'</td><td>'+toggleBtn+'</td></tr>';
 });
 }
 h+='</tbody></table></div>';
@@ -2136,6 +2145,14 @@ if(si&&document.activeElement!==si&&ACC_SEARCH){si.focus();var len=si.value.leng
 };
 if(cachedData){renderFn(cachedData);return}
 af('/api/accounts?status='+ACC_STATUS).then(renderFn).catch(function(e){document.getElementById('accArea').innerHTML='<div class="card" style="color:var(--red)">Erreur: '+(e.message||'chargement echoue')+'</div>'})}
+
+// Toggle sort: '7d' (last 7 days views) or 'total' (all-time views).
+// Re-render the accounts table without re-fetching, using the last cached data.
+function setAccSort(mode){
+  if(mode!=='7d'&&mode!=='total')return;
+  window.ACC_SORT=mode;
+  renderAccountsOnly();
+}
 
 function filterByVa(encodedName){
 var name=decodeURIComponent(encodedName);
