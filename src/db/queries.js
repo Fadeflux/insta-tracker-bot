@@ -85,11 +85,12 @@ async function insertPost({ igPostId, url, vaDiscordId, vaName, caption, platfor
   } else if (platform === 'twitter') {
     postType = 'tweet';
   }
-  // tracking_end is set to created_at + 72 hours so the post is followed for 3 full
-  // days regardless of when it was published. Previously this was set to 23h59 on
-  // the creation day (Europe/Paris), which truncated the tracking window for posts
-  // published late in the evening (a 22h post got only ~2h of scraping).
-  var sql = "INSERT INTO posts (ig_post_id, url, va_discord_id, va_name, post_type, caption, platform, guild_id, account_id, account_username, tracking_end) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW() + INTERVAL '72 hours') ON CONFLICT (ig_post_id) DO NOTHING RETURNING *";
+  // tracking_end is set to created_at + 7 days. We track each post for a full
+  // week to capture late-stage growth on viral posts (calibration showed the
+  // bot was missing ~15% of real views, mostly from posts that kept growing
+  // past the old 72h window). Cadence is decreasing — see computeNextScrapeDelay
+  // in scrapeQueue.js for the actual scrape schedule.
+  var sql = "INSERT INTO posts (ig_post_id, url, va_discord_id, va_name, post_type, caption, platform, guild_id, account_id, account_username, tracking_end) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW() + INTERVAL '7 days') ON CONFLICT (ig_post_id) DO NOTHING RETURNING *";
   var result = await pool.query(sql, [igPostId, url, vaDiscordId, vaName, postType, caption || null, platform, guildId || null, accountId || null, accountUsername || null]);
   return result.rows[0] || null;
 }
