@@ -80,6 +80,16 @@ client.once('ready', async function() {
     console.error('[CrashAlert] Setup failed:', e.message);
   }
 
+  // Hook the ticket-viral notifier so it can post in VAs' ticket channels
+  // when a post crosses 8k/20k/50k/100k views.
+  try {
+    var ticketViralNotifier = require('./jobs/ticketViralNotifier');
+    ticketViralNotifier.setDiscordClient(client);
+    console.log('[ViralTicket] Module wired to Discord client (thresholds=' + ticketViralNotifier.THRESHOLDS.join('/') + ')');
+  } catch (e) {
+    console.error('[ViralTicket] Setup failed:', e.message);
+  }
+
   createNotifyWorker();
   initCronJobs(client);
   // Register slash commands (idempotent — safe to run on every boot)
