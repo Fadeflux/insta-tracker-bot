@@ -1646,6 +1646,7 @@ h+='<button class="btn-sm btn-off" onclick="runForceDuels()" style="padding:9px 
 h+='<button class="btn-sm btn-off" onclick="runForceSummary()" style="padding:9px 14px;font-size:12px;font-weight:700">📊 Forcer resume du jour</button>';
 h+='<button class="btn-sm btn-off" onclick="runForceScrapeToday()" style="padding:9px 14px;font-size:12px;font-weight:700">⚡ Forcer scrape aujourd\'hui</button>';
 h+='<button class="btn-sm btn-off" onclick="runRecomputeSummaries()" style="padding:9px 14px;font-size:12px;font-weight:700">♻️ Recalculer classement</button>';
+h+='<button class="btn-sm btn-off" onclick="runTestViralNotif()" style="padding:9px 14px;font-size:12px;font-weight:700">🔥 Test notif viral</button>';
 h+='<button class="btn-sm btn-off" onclick="runDiagToday()" style="padding:9px 14px;font-size:12px;font-weight:700">🔍 Diagnostic vues du jour</button>';
 h+='</div>';
 h+='<div id="adm_action_msg" style="margin-top:10px;font-size:11px;min-height:14px"></div>';
@@ -1780,6 +1781,40 @@ var el=document.getElementById('adm_action_msg');
 if(!el)return;
 el.style.color=color||'var(--text3)';
 el.textContent=text;
+}
+
+// === TEST: trigger a viral-ticket notification on demand ===
+// Lets the admin verify the viral ticket notifier without waiting for a real
+// post to cross 8k views. Asks for platform + threshold, the backend picks
+// the most-recent post on that platform and fires the notif into the VA's ticket.
+function runTestViralNotif(){
+  var platform=prompt('Plateforme a tester ?\n\ninstagram / twitter / geelark / threads','instagram');
+  if(!platform)return;
+  platform=platform.trim().toLowerCase();
+  if(['instagram','twitter','geelark','threads'].indexOf(platform)===-1){
+    setAdmActionMsg('✗ Plateforme invalide','var(--red)');return;
+  }
+  var thresholdStr=prompt('Quel palier tester ?\n\n8000 / 20000 / 50000 / 100000','8000');
+  if(!thresholdStr)return;
+  var threshold=parseInt(thresholdStr,10);
+  if([8000,20000,50000,100000].indexOf(threshold)===-1){
+    setAdmActionMsg('✗ Palier invalide (utilise 8000, 20000, 50000 ou 100000)','var(--red)');return;
+  }
+  var btn=event.target;var oldText=btn.textContent;btn.textContent='⏳ En cours...';btn.disabled=true;
+  setAdmActionMsg('Envoi de la notif test...','var(--text3)');
+  fetch(A+'/api/admin/test-viral-notif',{
+    method:'POST',
+    headers:{'X-Auth-Token':T,'Content-Type':'application/json'},
+    body:JSON.stringify({platform:platform,threshold:threshold})
+  }).then(function(r){return r.json()}).then(function(d){
+    btn.textContent=oldText;btn.disabled=false;
+    if(d.success){
+      var p=d.post||{};
+      setAdmActionMsg('✓ Notif envoyee dans le ticket de '+(p.va_name||'?')+' (post #'+p.id+', '+platform+'). Va voir le ticket Discord !','var(--green)');
+    } else {
+      setAdmActionMsg('✗ '+(d.error||'Erreur'),'var(--red)');
+    }
+  }).catch(function(e){btn.textContent=oldText;btn.disabled=false;setAdmActionMsg('✗ '+e.message,'var(--red)')});
 }
 
 // === RECOMPUTE: rebuild the daily_summaries cache for the last 30 days ===
