@@ -211,7 +211,7 @@ var scrapeWorker = new Worker(
     // === Schedule next scrape ===
     // For Threads, we use a sparser schedule (H+1, H+6, H+12, H+24) to spare the
     // sacrificial accounts from getting banned too quickly. For other platforms,
-    // we keep the hourly cadence over the 72h tracking window.
+    // we keep the hourly cadence over the 7-day tracking window.
     //
     // The jobId is built from the post id AND the scheduled execution time
     // (rounded to the minute). This makes it idempotent: if two scheduling
@@ -259,11 +259,19 @@ scrapeWorker.on('completed', function(job) { logger.info('Scrape job completed: 
 // Returns the delay in milliseconds, or null if no more scrapes are needed.
 //
 // For Threads: 4 scrapes total at H+1, H+6, H+12, H+24 (spares the API accounts).
-// For Instagram/Twitter/Geelark: 72h tracking window.
-//   - Day 1 (0-24h): hourly (24 scrapes)
-//   - Day 2 (24-48h): twice (at H+36 and H+48)
-//   - Day 3 (48-72h): twice (at H+60 and H+72)
-//   Total: 28 scrapes per post over 3 days.
+// For Instagram/Twitter/Geelark: 7-day tracking window with decreasing frequency.
+//   - Day 1 (0-24h):   every hour                    → 24 scrapes
+//   - Day 2 (24-48h):  every 3 hours                 →  8 scrapes
+//   - Day 3 (48-72h):  every 3 hours                 →  8 scrapes
+//   - Days 4-7:        once per day at H+96, H+120, H+144, H+168 → 4 scrapes
+//   Total: 44 scrapes per post over 7 days.
+//
+// Why 7 days: viral posts continue to gain views well past 72h. Calibration data
+// showed the bot was capturing only ~85% of real views, mostly because viral
+// posts kept growing after we stopped tracking. Extending to 7 days with
+// progressively sparser scrapes lets us catch those late views without
+// hammering the proxy: scrape rate goes from 1/h on day 1 down to 1/day at
+// the end.
 function computeNextScrapeDelay(postCreatedAt, platform) {
   var ageMs = Date.now() - new Date(postCreatedAt).getTime();
   var ageMin = ageMs / 60000;
@@ -279,23 +287,24 @@ function computeNextScrapeDelay(postCreatedAt, platform) {
     return null;
   }
 
-  // Build the schedule for IG/Twitter/Geelark:
-  //   Day 1: every hour from H+1 to H+24 → [60, 120, 180, ..., 1440]
-  //   Day 2: H+36 (2160) and H+48 (2880)
-  //   Day 3: H+60 (3600) and H+72 (4320)
+  // Build the schedule for IG/Twitter/Geelark over 7 days, decreasing cadence.
   var schedule = [];
+  // Day 1 (1h..24h)
   for (var h = 1; h <= 24; h++) schedule.push(h * 60);
-  schedule.push(36 * 60); // 2160
-  schedule.push(48 * 60); // 2880
-  schedule.push(60 * 60); // 3600
-  schedule.push(72 * 60); // 4320
+  // Day 2-3 (every 3h)
+  for (var h2 = 27; h2 <= 72; h2 += 3) schedule.push(h2 * 60);
+  // Day 4-7 (once per day)
+  schedule.push(96 * 60);   // H+96  (day 4)
+  schedule.push(120 * 60);  // H+120 (day 5)
+  schedule.push(144 * 60);  // H+144 (day 6)
+  schedule.push(168 * 60);  // H+168 (day 7)
 
   for (var k = 0; k < schedule.length; k++) {
     if (ageMin < schedule[k]) {
       return Math.round((schedule[k] - ageMin) * 60000);
     }
   }
-  return null; // past H+72, no more scrapes
+  return null; // past H+168 (7 days), no more scrapes
 }
 
 async function scheduleInitialScrape(postId, url, platform) {
@@ -304,8 +313,9 @@ async function scheduleInitialScrape(postId, url, platform) {
   logger.info('[' + platform.toUpperCase() + '] Scheduled initial scrape for post ' + postId);
 }
 
-// Called at bot startup. Looks at posts that should still be tracked (within their
-// 72h window) and schedules a scrape for each one. Necessary because:
+// Called at bot startup. Looks at posts that should still be tracked (within
+// their 7-day tracking window) and schedules a scrape for each one. Necessary
+// because:
 //   - Bull jobs aren't durable across redeploys reliably (depends on Redis state)
 //   - Posts whose tracking_end was bumped by the migration need to resume scraping
 //   - We want to recover gracefully from any missed scheduling
@@ -316,7 +326,7 @@ async function resumeOrphanScrapes() {
       "SELECT id, url, platform, created_at FROM posts " +
       "WHERE deleted_at IS NULL " +
       "  AND tracking_end > NOW() " +
-      "  AND created_at >= NOW() - INTERVAL '72 hours' " +
+      "  AND created_at >= NOW() - INTERVAL '7 days' " +
       "ORDER BY created_at DESC"
     );
 
@@ -367,7 +377,7 @@ async function resumeOrphanScrapes() {
         skipped++;
       }
     }
-    logger.info('[Scrape] Resumed scraping for ' + resumed + ' orphan posts (window: 72h)' + (skipped ? ', ' + skipped + ' skipped (already queued)' : ''));
+    logger.info('[Scrape] Resumed scraping for ' + resumed + ' orphan posts (window: 7d)' + (skipped ? ', ' + skipped + ' skipped (already queued)' : ''));
   } catch (e) {
     logger.warn('[Scrape] resumeOrphanScrapes failed: ' + e.message);
   }
