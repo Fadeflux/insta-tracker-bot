@@ -1421,6 +1421,94 @@ function createWebServer() {
     }
   });
 
+  // === TEST: trigger a viral-ticket notification on demand ===
+  // Lets the admin verify the viral notifier (channel resolution, manager
+  // mention, message rendering) without waiting for a real post to cross
+  // 8k views. We pick the most-viewed post on the chosen platform, fake a
+  // snapshot at the requested threshold, and call the notifier directly.
+  // The test does NOT mark the threshold as sent — so a real notification
+  // can still fire later when the post genuinely crosses it.
+  app.post('/api/admin/test-viral-notif', checkAuth, checkAdmin, async function(req, res) {
+    try {
+      var platform = (req.body && req.body.platform) || 'instagram';
+      var threshold = parseInt(req.body && req.body.threshold) || 8000;
+      var postId = req.body && req.body.postId ? parseInt(req.body.postId) : null;
+
+      var pool = db.pool;
+      var post;
+      if (postId) {
+        // User specified a post — use it
+        var byId = await pool.query(
+          'SELECT id, url, platform, va_discord_id, va_name, account_username FROM posts WHERE id = $1 AND deleted_at IS NULL',
+          [postId]
+        );
+        post = byId.rows[0];
+        if (!post) return res.status(404).json({ error: 'Post not found or deleted' });
+      } else {
+        // Auto-pick: most recent post that has snapshots, on the requested platform
+        var auto = await pool.query(
+          "SELECT p.id, p.url, p.platform, p.va_discord_id, p.va_name, p.account_username " +
+          "FROM posts p " +
+          "WHERE p.deleted_at IS NULL AND p.platform = $1 AND p.va_discord_id IS NOT NULL " +
+          "  AND EXISTS (SELECT 1 FROM snapshots s WHERE s.post_id = p.id) " +
+          "ORDER BY p.created_at DESC LIMIT 1",
+          [platform]
+        );
+        post = auto.rows[0];
+        if (!post) return res.status(404).json({ error: 'No suitable post found on platform ' + platform });
+      }
+
+      // Fake stats at the requested threshold
+      var fakeStats = {
+        views: threshold + Math.floor(Math.random() * 500),
+        likes: Math.floor(threshold * 0.012),
+        comments: Math.floor(threshold * 0.0015),
+        shares: 0,
+      };
+
+      // Temporarily clear the sent-threshold flag for this post+threshold so
+      // the notifier doesn't skip ("already sent") — but only for the test
+      // threshold, not the others. We'll restore the flag right after.
+      var hadFlag = await pool.query(
+        'SELECT 1 FROM post_viral_milestones_sent WHERE post_id = $1 AND threshold = $2',
+        [post.id, threshold]
+      );
+      var hadFlagBefore = hadFlag.rows.length > 0;
+      if (hadFlagBefore) {
+        await pool.query(
+          'DELETE FROM post_viral_milestones_sent WHERE post_id = $1 AND threshold = $2',
+          [post.id, threshold]
+        );
+      }
+
+      // Call the notifier
+      var ticketViralNotifier = require('../jobs/ticketViralNotifier');
+      await ticketViralNotifier.maybeNotifyMilestone(post, fakeStats, db);
+
+      // Clean up: remove the "sent" flag we just created during the test, so
+      // the real notification can still fire later. Skip if there was already
+      // a real prior "sent" flag (don't lose state).
+      if (!hadFlagBefore) {
+        await pool.query(
+          'DELETE FROM post_viral_milestones_sent WHERE post_id = $1 AND threshold = $2',
+          [post.id, threshold]
+        );
+      }
+
+      console.log('[Admin] test-viral-notif fired for post ' + post.id + ' (threshold=' + threshold + ', platform=' + post.platform + ', VA=' + post.va_name + ')');
+      res.json({
+        success: true,
+        post: { id: post.id, platform: post.platform, va_name: post.va_name, account_username: post.account_username, url: post.url },
+        threshold: threshold,
+        message: 'Notif declenchee. Verifie le ticket Discord du VA et les logs Railway pour ' +
+                 '"[ViralTicket] sent threshold ' + threshold + '".',
+      });
+    } catch(err) {
+      console.error('[Admin] test-viral-notif failed:', err.message, err.stack);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // === In-app notifications (bell icon) ===
   // List recent notifications, optionally filtered by platform.
   app.get('/api/notifications', checkAuth, async function(req, res) {
