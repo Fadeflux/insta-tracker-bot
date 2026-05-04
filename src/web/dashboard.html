@@ -1645,6 +1645,7 @@ h+='<div style="display:flex;gap:10px;flex-wrap:wrap">';
 h+='<button class="btn-sm btn-off" onclick="runForceDuels()" style="padding:9px 14px;font-size:12px;font-weight:700">🎮 Forcer duels + champion</button>';
 h+='<button class="btn-sm btn-off" onclick="runForceSummary()" style="padding:9px 14px;font-size:12px;font-weight:700">📊 Forcer resume du jour</button>';
 h+='<button class="btn-sm btn-off" onclick="runForceScrapeToday()" style="padding:9px 14px;font-size:12px;font-weight:700">⚡ Forcer scrape aujourd\'hui</button>';
+h+='<button class="btn-sm btn-off" onclick="runRecomputeSummaries()" style="padding:9px 14px;font-size:12px;font-weight:700">♻️ Recalculer classement</button>';
 h+='<button class="btn-sm btn-off" onclick="runDiagToday()" style="padding:9px 14px;font-size:12px;font-weight:700">🔍 Diagnostic vues du jour</button>';
 h+='</div>';
 h+='<div id="adm_action_msg" style="margin-top:10px;font-size:11px;min-height:14px"></div>';
@@ -1779,6 +1780,25 @@ var el=document.getElementById('adm_action_msg');
 if(!el)return;
 el.style.color=color||'var(--text3)';
 el.textContent=text;
+}
+
+// === RECOMPUTE: rebuild the daily_summaries cache for the last 30 days ===
+// Use this after deleting test posts that still show up in the leaderboard.
+// It recomputes the per-day, per-platform totals from the source tables,
+// which automatically excludes any post you've soft-deleted.
+function runRecomputeSummaries(){
+  if(!confirm('Recalculer le classement et les totaux des 30 derniers jours ?\n\nA utiliser apres avoir supprime des posts pour les enlever du classement.\nL\'operation prend ~10 secondes.'))return;
+  var btn=event.target;var oldText=btn.textContent;btn.textContent='⏳ En cours...';btn.disabled=true;
+  setAdmActionMsg('Recalcul en cours...','var(--text3)');
+  fetch(A+'/api/admin/recompute-summaries',{method:'POST',headers:{'X-Auth-Token':T,'Content-Type':'application/json'},body:JSON.stringify({days:30})})
+    .then(function(r){return r.json()}).then(function(d){
+      btn.textContent=oldText;btn.disabled=false;
+      if(d.success){
+        setAdmActionMsg('✓ '+d.recomputed+' totaux journaliers recalcules sur '+d.days+' jours','var(--green)');
+      } else {
+        setAdmActionMsg('✗ '+(d.error||'Erreur'),'var(--red)');
+      }
+    }).catch(function(e){btn.textContent=oldText;btn.disabled=false;setAdmActionMsg('✗ '+e.message,'var(--red)')});
 }
 
 // === FORCE SCRAPE: re-scrape every post created today ===
