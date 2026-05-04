@@ -15,7 +15,7 @@ const pool = {
     });
   },
   // Expose the raw pool for cases where someone needs the connection itself
-  // (transactions, listeners, etc.) — not used by query caallers.
+  // (transactions, listeners, etc.) — not used by query callers.
   connect: function() { return rawPool.connect.apply(rawPool, arguments); },
   end: function() { return rawPool.end.apply(rawPool, arguments); },
 };
@@ -1156,12 +1156,16 @@ async function listAccountsWithStats(opts) {
   var where = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
 
   // Aggregate snapshots via LATERAL to avoid row-multiplication on joins.
+  // We expose both 'total_views' (all-time per account) and 'views_7d' (sum
+  // of latest snapshot views over posts created in the last 7 days). The
+  // latter is more useful for spotting accounts currently performing.
   var sql =
     "SELECT a.id, a.username, a.platform, a.va_discord_id, a.va_name, a.status, " +
     "       a.first_seen_at, a.last_seen_at, a.created_at, " +
     "       COALESCE(stats.total_posts, 0) AS total_posts, " +
     "       COALESCE(stats.posts_7d, 0) AS posts_7d, " +
     "       COALESCE(stats.total_views, 0) AS total_views, " +
+    "       COALESCE(stats.views_7d, 0) AS views_7d, " +
     "       COALESCE(stats.total_likes, 0) AS total_likes, " +
     "       COALESCE(stats.total_comments, 0) AS total_comments, " +
     "       COALESCE(stats.total_shares, 0) AS total_shares, " +
@@ -1171,6 +1175,7 @@ async function listAccountsWithStats(opts) {
     "  SELECT COUNT(DISTINCT p.id) AS total_posts, " +
     "         COUNT(DISTINCT p.id) FILTER (WHERE p.created_at >= NOW() - INTERVAL '7 days') AS posts_7d, " +
     "         COALESCE(SUM(latest.views), 0) AS total_views, " +
+    "         COALESCE(SUM(latest.views) FILTER (WHERE p.created_at >= NOW() - INTERVAL '7 days'), 0) AS views_7d, " +
     "         COALESCE(SUM(latest.likes), 0) AS total_likes, " +
     "         COALESCE(SUM(latest.comments), 0) AS total_comments, " +
     "         COALESCE(SUM(latest.shares), 0) AS total_shares, " +
@@ -1224,16 +1229,47 @@ async function getAccountDetails(accountId, daysLimit) {
 // Soft delete a post: keeps the row but marks it as deleted.
 // Deleted posts are excluded from rankings, totals, alerts, etc.
 async function softDeletePost(postId, deletedBy) {
-  var sql = "UPDATE posts SET deleted_at = NOW(), deleted_by = $2, status = 'deleted' WHERE id = $1 AND deleted_at IS NULL RETURNING id, platform, account_id";
+  // We need the post's creation date BEFORE marking it deleted, so we can
+  // recompute the daily_summary for that date afterward (otherwise the
+  // dashboard's leaderboard would still show the deleted post's contribution).
+  // The Bénin TZ is used for date attribution to stay consistent with the
+  // rest of the app.
+  var sql = "UPDATE posts SET deleted_at = NOW(), deleted_by = $2, status = 'deleted' " +
+            "WHERE id = $1 AND deleted_at IS NULL " +
+            "RETURNING id, platform, account_id, " +
+            "  TO_CHAR((created_at AT TIME ZONE 'Africa/Porto-Novo'), 'YYYY-MM-DD') AS post_date";
   var result = await pool.query(sql, [postId, deletedBy || 'unknown']);
-  return result.rows[0] || null;
+  var row = result.rows[0] || null;
+  if (row && row.post_date && row.platform) {
+    // Best-effort recompute — if it fails, the post is still soft-deleted.
+    // Catch errors silently so the delete operation itself doesn't appear to fail.
+    try {
+      await computeDailySummary(row.post_date, row.platform);
+    } catch (e) {
+      logger.warn('[softDeletePost] failed to recompute daily_summary for ' + row.post_date + '/' + row.platform + ': ' + e.message);
+    }
+  }
+  return row;
 }
 
-// Restore a previously soft-deleted post back to active.
+// Restore a previously soft-deleted post back to active. Also recompute the
+// daily_summary for the post's date so the leaderboard immediately reflects
+// the restored views/likes.
 async function restorePost(postId) {
-  var sql = "UPDATE posts SET deleted_at = NULL, deleted_by = NULL, status = 'active' WHERE id = $1 AND deleted_at IS NOT NULL RETURNING id, platform";
+  var sql = "UPDATE posts SET deleted_at = NULL, deleted_by = NULL, status = 'active' " +
+            "WHERE id = $1 AND deleted_at IS NOT NULL " +
+            "RETURNING id, platform, " +
+            "  TO_CHAR((created_at AT TIME ZONE 'Africa/Porto-Novo'), 'YYYY-MM-DD') AS post_date";
   var result = await pool.query(sql, [postId]);
-  return result.rows[0] || null;
+  var row = result.rows[0] || null;
+  if (row && row.post_date && row.platform) {
+    try {
+      await computeDailySummary(row.post_date, row.platform);
+    } catch (e) {
+      logger.warn('[restorePost] failed to recompute daily_summary for ' + row.post_date + '/' + row.platform + ': ' + e.message);
+    }
+  }
+  return row;
 }
 
 // Get a post by ID for permission checks before delete/restore.
