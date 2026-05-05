@@ -90,6 +90,15 @@ client.once('ready', async function() {
     console.error('[ViralTicket] Setup failed:', e.message);
   }
 
+  // Hook the ticket account alerts module (dead account, shadowban, concentrated views)
+  try {
+    var ticketAccountAlerts = require('./jobs/ticketAccountAlerts');
+    ticketAccountAlerts.setDiscordClient(client);
+    console.log('[AccountAlert] Module wired to Discord client');
+  } catch (e) {
+    console.error('[AccountAlert] Setup failed:', e.message);
+  }
+
   createNotifyWorker();
   initCronJobs(client);
   // Register slash commands (idempotent — safe to run on every boot)
