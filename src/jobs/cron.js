@@ -41,6 +41,32 @@ function initCronJobs(client) {
     }
   }, { timezone: 'Africa/Porto-Novo' });
 
+  // Top-account decline check — runs daily at 10h Bénin (after inactivity).
+  // Identifies each VA's "favorite account" (most views over 30 days) and
+  // alerts when its weekly performance drops >30% vs the 30-day baseline.
+  cron.schedule('0 10 * * *', async function() {
+    try {
+      var topAccountDeclining = require('./topAccountDeclining');
+      await topAccountDeclining.checkDecliningTopAccounts(db);
+    } catch (err) {
+      console.error('Top account decline cron failed:', err.message);
+    }
+  }, { timezone: 'Africa/Porto-Novo' });
+
+  // Badge sync — runs every hour. Re-evaluates each VA's badges against the
+  // performance criteria and updates Discord roles + nicknames. Also handles
+  // expiry (badges removed if no new badge earned for 14 days). Hourly is
+  // a good balance between "first viral" feeling responsive and avoiding
+  // unnecessary Discord API churn.
+  cron.schedule('0 * * * *', async function() {
+    try {
+      var badges = require('./badges');
+      await badges.syncAllBadges(db);
+    } catch (err) {
+      console.error('Badge sync cron failed:', err.message);
+    }
+  }, { timezone: 'Africa/Porto-Novo' });
+
   // Daily summary at 23:59 Africa/Porto-Novo (Benin) — for each platform.
   // Same TZ as personal recap so both are aligned with the team's working day.
   cron.schedule('59 23 * * *', async function() {
