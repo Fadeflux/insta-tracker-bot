@@ -394,6 +394,30 @@ DO $$ BEGIN
     PRIMARY KEY (account_id, kind)
   );
 
+  -- Per-account override for the "day J" calculation. By default the day is
+  -- counted from the first tracked post on the account, but VAs sometimes
+  -- forget to send the first link(s) — so an admin can adjust the start
+  -- date here. If start_date is set, J1 is that date; J2 is the next day,
+  -- and so on. NULL = use the natural first-post date.
+  CREATE TABLE IF NOT EXISTS account_day_overrides (
+    account_id   INTEGER PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
+    start_date   DATE,
+    updated_by   VARCHAR(128),
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
+
+  -- Shadowban state for the daily-objectives flow. When a shadowban is detected,
+  -- we mark the account "in_rest" with shadowban_at = today. The morning
+  -- objective routine then says "rest day J1..J7" and from J8 onwards
+  -- "ramp-up J1=1 post / J2=2 posts / J3+=3 posts (normal)".
+  -- After J10 of ramp-up (= J17 since shadowban) we clear the row and
+  -- the account returns to its standard day calculation.
+  CREATE TABLE IF NOT EXISTS account_shadowban_state (
+    account_id     INTEGER PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
+    shadowban_at   DATE NOT NULL,
+    detected_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
+
   -- Per-user read state. We don't want to spam every user with the same notif
   -- counter, so each dashboard user has their own "last read" timestamp per
   -- platform. Notifs newer than this timestamp count as unread.
