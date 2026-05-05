@@ -22,9 +22,12 @@ function setDiscordClient(client) { discordClient = client; }
 // Platforms that have day-based posting rules
 var PLATFORMS_WITH_RULES = ['instagram', 'geelark'];
 
-// Which "viral lookback offsets" we remind the VA about. A reel is suggested
-// for repost on offsets 2, 4, 6, 8, 10, 12, 14 days after it became viral.
-var VIRAL_REMINDER_OFFSETS = [2, 4, 6, 8, 10, 12, 14];
+// Reels viral can be reproduced every 2 days INDEFINITELY on the same account.
+// We don't cap the lookback — as long as the account is still active and the
+// post still exists in DB (not soft-deleted), the suggestion will keep
+// rotating: J2, J4, J6, J8, ..., J100, J200, ...
+// This matches the user's instruction: "même après J14 on peut le reproduire,
+// c'est infini tant que le compte est toujours actif".
 
 // Find the VA's ticket channel by Discord username (Lola creates them)
 async function findVaTicketChannel(guild, vaUsername) {
@@ -44,17 +47,18 @@ async function findVaTicketChannel(guild, vaUsername) {
   } catch (e) { return null; }
 }
 
-// === Find reels that became viral exactly N days ago (per offset) ===
+// === Find reels that became viral on a day that is exactly N×2 days ago ===
 // "Viral" = views ≥ 8000 (matches our viral milestone threshold).
-// We look at the post's snapshots and find when it first crossed the threshold.
-// For each VA, return rows like:
-//   { va_discord_id, va_name, platform, account_username, post_url,
-//     went_viral_on, days_ago, peak_views }
+// We use the post_viral_milestones_sent table as a proxy for "went viral":
+// the first time a post crossed 8000 views, the row was created with
+// sent_at = that moment. So sent_at::date in Bénin TZ ≈ when it went viral.
+//
+// Filter rules:
+//   - Days-since-viral is even (every 2 days = J2, J4, J6, ..., infinitely)
+//   - Days-since-viral ≥ 2 (we don't suggest repost on the day it went viral)
+//   - The account is still active (not deactivated by the user)
+//   - The post hasn't been soft-deleted
 async function getViralReelsToRepost(db) {
-  // We use the post_viral_milestones_sent table as a proxy for "went viral":
-  // the first time a post crossed 8000 views, the row was created with
-  // sent_at = that moment. So sent_at::date in Bénin TZ ≈ when it went viral.
-  // Then we filter to posts whose viral_date is exactly N days ago.
   var sql =
     "SELECT p.id AS post_id, p.url, p.platform, p.account_username, " +
     "       p.va_discord_id, p.va_name, " +
@@ -64,6 +68,7 @@ async function getViralReelsToRepost(db) {
     "       COALESCE(latest.views, 0) AS peak_views " +
     "FROM post_viral_milestones_sent mile " +
     "JOIN posts p ON p.id = mile.post_id " +
+    "LEFT JOIN accounts a ON a.id = p.account_id " +
     "LEFT JOIN LATERAL (" +
     "  SELECT views FROM snapshots s " +
     "  WHERE s.post_id = p.id AND COALESCE(s.error, '') <> 'coaching_sent' " +
@@ -72,10 +77,13 @@ async function getViralReelsToRepost(db) {
     "WHERE mile.threshold = 8000 " + // we only count the first viral milestone
     "  AND p.deleted_at IS NULL " +
     "  AND p.va_discord_id IS NOT NULL " +
+    "  AND (a.id IS NULL OR a.status = 'active') " + // skip if account deactivated
     "  AND ((NOW() AT TIME ZONE 'Africa/Porto-Novo')::date - " +
-    "       (mile.sent_at AT TIME ZONE 'Africa/Porto-Novo')::date) = ANY($1::int[])";
+    "       (mile.sent_at AT TIME ZONE 'Africa/Porto-Novo')::date) >= 2 " +
+    "  AND ((NOW() AT TIME ZONE 'Africa/Porto-Novo')::date - " +
+    "       (mile.sent_at AT TIME ZONE 'Africa/Porto-Novo')::date) % 2 = 0";
   try {
-    var r = await db.pool.query(sql, [VIRAL_REMINDER_OFFSETS]);
+    var r = await db.pool.query(sql);
     return r.rows;
   } catch (e) {
     logger.warn('[DailyObj] getViralReelsToRepost failed: ' + e.message);
@@ -166,7 +174,7 @@ function buildMessage(va) {
     lines.push('');
     lines.push('💡 Pour chaque reel : mets-la dans un drive, envoie le lien au manager pour changer les metadonnees, et reposte d\'ici 1-2 jours sur le meme compte.');
   } else {
-    lines.push('💪 **Continue comme ca pour faire percer tes comptes !**');
+    lines.push('💪 **Continue comme ca pour reussir a trouver des post viraux et avoir des tres bons comptes !**');
   }
 
   return lines.join('\n');
