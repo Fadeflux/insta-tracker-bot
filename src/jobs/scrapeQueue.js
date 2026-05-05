@@ -261,6 +261,16 @@ var scrapeWorker = new Worker(
       logger.warn('[WakeUp] notifier failed: ' + wuErr.message);
     }
 
+    // === PERSONAL RECORD ===
+    // If this post is the VA's new all-time best (across all their accounts
+    // and platforms), celebrate it in their ticket. Pure motivation feature.
+    try {
+      var personalRecord = require('./personalRecord');
+      await personalRecord.maybeNotifyPersonalRecord(db, post, stats);
+    } catch (prErr) {
+      logger.warn('[PersonalRecord] notifier failed: ' + prErr.message);
+    }
+
     await notifyQueue.add('hourly-update', {
       postId: postId,
       currentStats: stats,

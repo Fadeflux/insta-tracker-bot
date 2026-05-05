@@ -238,6 +238,19 @@ function initCronJobs(client) {
     }
   }, { timezone: 'Africa/Porto-Novo' });
 
+  // Weekly VA stats — Sunday 20h Bénin time. Sends a personal weekly recap
+  // in each VA's ticket channel summarising posts published, total views
+  // (with delta vs previous week), best post, viral count, and rank in the
+  // agency. Pure motivation feature. Cron runs every Sunday (day 0).
+  cron.schedule('0 20 * * 0', async function() {
+    try {
+      var weeklyVaStats = require('./weeklyVaStats');
+      await weeklyVaStats.sendWeeklyStats(db);
+    } catch (err) {
+      console.error('Weekly VA stats cron failed', err.message);
+    }
+  }, { timezone: 'Africa/Porto-Novo' });
+
   // Viral post notifications — every 10 min
   cron.schedule('*/10 * * * *', async function() {
     try { await runForEachPlatform(notifyViralPosts); } catch (err) { console.error('Viral notification cron failed', err.message); }
