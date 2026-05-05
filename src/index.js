@@ -153,6 +153,15 @@ client.once('ready', async function() {
     console.error('[PersonalRecord] Setup failed:', e.message);
   }
 
+  // Hook the inactivity alerts module (24h/48h/72h escalation in VA ticket)
+  try {
+    var inactivityAlerts = require('./jobs/inactivityAlerts');
+    inactivityAlerts.setDiscordClient(client);
+    console.log('[Inactivity] Module wired to Discord client');
+  } catch (e) {
+    console.error('[Inactivity] Setup failed:', e.message);
+  }
+
   createNotifyWorker();
   initCronJobs(client);
   // Register slash commands (idempotent — safe to run on every boot)
