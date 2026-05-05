@@ -126,6 +126,15 @@ client.once('ready', async function() {
     console.error('[WakeUp] Setup failed:', e.message);
   }
 
+  // Hook the daily manager recap (23h59 summary in #recap-quotidien)
+  try {
+    var dailyManagerRecap = require('./jobs/dailyManagerRecap');
+    dailyManagerRecap.setDiscordClient(client);
+    console.log('[ManagerRecap] Module wired to Discord client');
+  } catch (e) {
+    console.error('[ManagerRecap] Setup failed:', e.message);
+  }
+
   createNotifyWorker();
   initCronJobs(client);
   // Register slash commands (idempotent — safe to run on every boot)
