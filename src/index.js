@@ -99,6 +99,33 @@ client.once('ready', async function() {
     console.error('[AccountAlert] Setup failed:', e.message);
   }
 
+  // Hook the daily objectives notifier (7h morning summary in each VA's ticket)
+  try {
+    var dailyObjectives = require('./jobs/dailyObjectives');
+    dailyObjectives.setDiscordClient(client);
+    console.log('[DailyObj] Module wired to Discord client');
+  } catch (e) {
+    console.error('[DailyObj] Setup failed:', e.message);
+  }
+
+  // Hook the deleted-post detector (notifies VA in their ticket when IG removes a post)
+  try {
+    var deletedPostDetector = require('./jobs/deletedPostDetector');
+    deletedPostDetector.setDiscordClient(client);
+    console.log('[DeletedPost] Module wired to Discord client');
+  } catch (e) {
+    console.error('[DeletedPost] Setup failed:', e.message);
+  }
+
+  // Hook the account wake-up detector (notifies VA when a flopping account wakes up)
+  try {
+    var accountWakeUp = require('./jobs/accountWakeUp');
+    accountWakeUp.setDiscordClient(client);
+    console.log('[WakeUp] Module wired to Discord client');
+  } catch (e) {
+    console.error('[WakeUp] Setup failed:', e.message);
+  }
+
   createNotifyWorker();
   initCronJobs(client);
   // Register slash commands (idempotent — safe to run on every boot)
