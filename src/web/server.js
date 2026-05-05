@@ -1509,6 +1509,125 @@ function createWebServer() {
     }
   });
 
+  // === ACCOUNT DAYS: list all accounts with their computed day state ===
+  // Returns a row per (active) account with: state, day label, objective.
+  // Used by the "Comptes & Jours" admin page to let the user adjust the
+  // start date if a VA forgot to send an early link.
+  app.get('/api/account-days', checkAuth, async function(req, res) {
+    try {
+      var accountDayState = require('../jobs/accountDayState');
+      var states = await accountDayState.computeDailyState(db, { platforms: ['instagram', 'geelark'] });
+      // Also fetch the override start_date and the natural first-post date
+      // so the UI can show both.
+      var overrides = (await db.pool.query(
+        "SELECT a.id, ovr.start_date AS override_start, ovr.updated_by, ovr.updated_at, " +
+        "       (a.created_at AT TIME ZONE 'Africa/Porto-Novo')::date AS account_added_date, " +
+        "       fp.first_post_date " +
+        "FROM accounts a " +
+        "LEFT JOIN account_day_overrides ovr ON ovr.account_id = a.id " +
+        "LEFT JOIN LATERAL (" +
+        "  SELECT MIN((p.created_at AT TIME ZONE 'Africa/Porto-Novo')::date) AS first_post_date " +
+        "  FROM posts p WHERE p.account_id = a.id AND p.deleted_at IS NULL" +
+        ") fp ON true " +
+        "WHERE a.status = 'active' AND a.va_discord_id IS NOT NULL " +
+        "  AND a.platform = ANY($1::varchar[])",
+        [['instagram', 'geelark']]
+      )).rows;
+      var byId = {};
+      overrides.forEach(function(o) { byId[o.id] = o; });
+      // Merge
+      var rows = states.map(function(s) {
+        var o = byId[s.account_id] || {};
+        return {
+          account_id: s.account_id,
+          username: s.username,
+          platform: s.platform,
+          va_name: s.va_name,
+          va_discord_id: s.va_discord_id,
+          state: s.state,
+          day_label: s.day_label,
+          objective: s.objective,
+          reason: s.reason,
+          first_post_date: o.first_post_date,
+          account_added_date: o.account_added_date,
+          override_start: o.override_start,
+          override_by: o.updated_by,
+          override_at: o.updated_at,
+        };
+      });
+      res.json({ accounts: rows });
+    } catch(err) {
+      console.error('[/api/account-days] failed:', err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // === SET OR CLEAR a day-override for an account ===
+  // POST { startDate: 'YYYY-MM-DD' | null }
+  // null clears the override.
+  app.post('/api/account-days/:id/override', checkAuth, checkAdmin, async function(req, res) {
+    try {
+      var accountId = parseInt(req.params.id);
+      var startDate = (req.body && req.body.startDate) || null;
+      var accountDayState = require('../jobs/accountDayState');
+      // Validate the date if provided
+      if (startDate) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate)) {
+          return res.status(400).json({ error: 'startDate must be YYYY-MM-DD' });
+        }
+        await accountDayState.setDayOverride(db, accountId, startDate, (req.user && req.user.username) || 'admin');
+      } else {
+        await accountDayState.clearDayOverride(db, accountId);
+      }
+      res.json({ success: true });
+    } catch(err) {
+      console.error('[/api/account-days/override] failed:', err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // === CLEAR shadowban state manually (admin override) ===
+  // Useful if you want to take an account out of "rest" early or fix a
+  // false-positive shadowban detection.
+  app.post('/api/account-days/:id/clear-shadowban', checkAuth, checkAdmin, async function(req, res) {
+    try {
+      var accountId = parseInt(req.params.id);
+      await db.pool.query("DELETE FROM account_shadowban_state WHERE account_id = $1", [accountId]);
+      res.json({ success: true });
+    } catch(err) {
+      console.error('[/api/account-days/clear-shadowban] failed:', err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // === MANUALLY mark an account as shadowbanned ===
+  // Useful if you spot the issue before the bot auto-detects it.
+  app.post('/api/account-days/:id/mark-shadowban', checkAuth, checkAdmin, async function(req, res) {
+    try {
+      var accountId = parseInt(req.params.id);
+      var accountDayState = require('../jobs/accountDayState');
+      await accountDayState.markShadowban(db, accountId);
+      res.json({ success: true });
+    } catch(err) {
+      console.error('[/api/account-days/mark-shadowban] failed:', err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // === TEST: trigger the daily-objectives notification on demand ===
+  // Lets the admin verify the daily summary message before 7h tomorrow.
+  // Sends to ALL VAs with at least one active account on IG/Geelark.
+  app.post('/api/admin/test-daily-objectives', checkAuth, checkAdmin, async function(req, res) {
+    try {
+      var dailyObjectives = require('../jobs/dailyObjectives');
+      var result = await dailyObjectives.sendDailyObjectives(db);
+      res.json({ success: true, result: result });
+    } catch(err) {
+      console.error('[Admin] test-daily-objectives failed:', err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // === In-app notifications (bell icon) ===
   // List recent notifications, optionally filtered by platform.
   app.get('/api/notifications', checkAuth, async function(req, res) {
