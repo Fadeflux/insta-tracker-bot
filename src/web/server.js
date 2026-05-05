@@ -1667,6 +1667,44 @@ function createWebServer() {
     }
   });
 
+  // === TEST: trigger the top-account decline check on demand ===
+  app.post('/api/admin/test-top-decline', checkAuth, checkAdmin, async function(req, res) {
+    try {
+      var topAccountDeclining = require('../jobs/topAccountDeclining');
+      var result = await topAccountDeclining.checkDecliningTopAccounts(db);
+      res.json({ success: true, result: result });
+    } catch(err) {
+      console.error('[Admin] test-top-decline failed:', err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // === Post the consultation buttons menu in every VA ticket ===
+  // Run this once after deploying the feature. Idempotent — if the menu
+  // already exists in a ticket, it's not re-posted.
+  app.post('/api/admin/post-consult-menu', checkAuth, checkAdmin, async function(req, res) {
+    try {
+      var consultButtons = require('../jobs/consultButtons');
+      var result = await consultButtons.postConsultMenuToAllVas(db);
+      res.json({ success: true, result: result });
+    } catch(err) {
+      console.error('[Admin] post-consult-menu failed:', err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // === Force a badge sync for all VAs ===
+  app.post('/api/admin/sync-badges', checkAuth, checkAdmin, async function(req, res) {
+    try {
+      var badges = require('../jobs/badges');
+      var result = await badges.syncAllBadges(db);
+      res.json({ success: true, result: result });
+    } catch(err) {
+      console.error('[Admin] sync-badges failed:', err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // === In-app notifications (bell icon) ===
   // List recent notifications, optionally filtered by platform.
   app.get('/api/notifications', checkAuth, async function(req, res) {

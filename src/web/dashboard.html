@@ -1651,6 +1651,9 @@ h+='<button class="btn-sm btn-off" onclick="runTestDailyObj()" style="padding:9p
 h+='<button class="btn-sm btn-off" onclick="runTestDailyRecap()" style="padding:9px 14px;font-size:12px;font-weight:700">📊 Test recap manager</button>';
 h+='<button class="btn-sm btn-off" onclick="runTestWeeklyStats()" style="padding:9px 14px;font-size:12px;font-weight:700">📅 Test stats hebdo VA</button>';
 h+='<button class="btn-sm btn-off" onclick="runTestInactivity()" style="padding:9px 14px;font-size:12px;font-weight:700">😴 Test notifs inactivite</button>';
+h+='<button class="btn-sm btn-off" onclick="runTestTopDecline()" style="padding:9px 14px;font-size:12px;font-weight:700">📉 Test top sous-perf</button>';
+h+='<button class="btn-sm btn-off" onclick="runPostConsultMenu()" style="padding:9px 14px;font-size:12px;font-weight:700">💬 Poster menu conseil</button>';
+h+='<button class="btn-sm btn-off" onclick="runSyncBadges()" style="padding:9px 14px;font-size:12px;font-weight:700">🏆 Sync badges</button>';
 h+='<button class="btn-sm btn-off" onclick="runDiagToday()" style="padding:9px 14px;font-size:12px;font-weight:700">🔍 Diagnostic vues du jour</button>';
 h+='</div>';
 h+='<div id="adm_action_msg" style="margin-top:10px;font-size:11px;min-height:14px"></div>';
@@ -1902,6 +1905,51 @@ function markShadowban(accountId){
       if(d.success){loadAccountDays();}
       else{alert('Erreur: '+(d.error||'inconnue'))}
     }).catch(function(e){alert('Erreur: '+e.message)});
+}
+
+// === TEST: top-account declining check ===
+function runTestTopDecline(){
+  if(!confirm('Lancer le scan des comptes phare en chute ?'))return;
+  var btn=event.target;var oldText=btn.textContent;btn.textContent='⏳ En cours...';btn.disabled=true;
+  setAdmActionMsg('Scan en cours...','var(--text3)');
+  fetch(A+'/api/admin/test-top-decline',{method:'POST',headers:{'X-Auth-Token':T,'Content-Type':'application/json'}})
+    .then(function(r){return r.json()}).then(function(d){
+      btn.textContent=oldText;btn.disabled=false;
+      if(d.success){
+        var r=d.result||{};
+        setAdmActionMsg('✓ Notifs envoyees : '+(r.sent||0)+' / skipped : '+(r.skipped||0),'var(--green)');
+      } else { setAdmActionMsg('✗ '+(d.error||'Erreur'),'var(--red)'); }
+    }).catch(function(e){btn.textContent=oldText;btn.disabled=false;setAdmActionMsg('✗ '+e.message,'var(--red)')});
+}
+
+// === Post consult menu in all VA tickets ===
+function runPostConsultMenu(){
+  if(!confirm('Poster le menu "Demander conseil" dans tous les tickets VA ?\n\nIdempotent : si le menu existe deja, il n\'est pas re-poste.'))return;
+  var btn=event.target;var oldText=btn.textContent;btn.textContent='⏳ En cours...';btn.disabled=true;
+  setAdmActionMsg('Posting en cours (peut prendre 1 min)...','var(--text3)');
+  fetch(A+'/api/admin/post-consult-menu',{method:'POST',headers:{'X-Auth-Token':T,'Content-Type':'application/json'}})
+    .then(function(r){return r.json()}).then(function(d){
+      btn.textContent=oldText;btn.disabled=false;
+      if(d.success){
+        var r=d.result||{};
+        setAdmActionMsg('✓ Menu poste dans '+(r.posted||0)+' tickets / '+(r.skipped||0)+' deja existants','var(--green)');
+      } else { setAdmActionMsg('✗ '+(d.error||'Erreur'),'var(--red)'); }
+    }).catch(function(e){btn.textContent=oldText;btn.disabled=false;setAdmActionMsg('✗ '+e.message,'var(--red)')});
+}
+
+// === Force a badge sync ===
+function runSyncBadges(){
+  if(!confirm('Lancer la synchronisation des badges maintenant ?\n\nVa evaluer chaque VA, attribuer/retirer les roles Discord et changer les pseudos.'))return;
+  var btn=event.target;var oldText=btn.textContent;btn.textContent='⏳ En cours...';btn.disabled=true;
+  setAdmActionMsg('Sync en cours (peut prendre quelques minutes)...','var(--text3)');
+  fetch(A+'/api/admin/sync-badges',{method:'POST',headers:{'X-Auth-Token':T,'Content-Type':'application/json'}})
+    .then(function(r){return r.json()}).then(function(d){
+      btn.textContent=oldText;btn.disabled=false;
+      if(d.success){
+        var r=d.result||{};
+        setAdmActionMsg('✓ Sync : '+(r.synced||0)+' VAs verifies / '+(r.changed||0)+' modifies','var(--green)');
+      } else { setAdmActionMsg('✗ '+(d.error||'Erreur'),'var(--red)'); }
+    }).catch(function(e){btn.textContent=oldText;btn.disabled=false;setAdmActionMsg('✗ '+e.message,'var(--red)')});
 }
 
 // === TEST: trigger the inactivity alerts on demand ===
