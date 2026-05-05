@@ -204,6 +204,26 @@ function initCronJobs(client) {
     }
   }, { timezone: 'Africa/Porto-Novo' });
 
+  // Daily morning objectives — 7h Bénin time. Posts a personalised message
+  // in each VA's ticket channel summarising:
+  //   - Per-account post objectives based on day J (J1=1, J2=2, J3+=3)
+  //   - Shadowban rest/rampup status if applicable
+  //   - Viral reels to repost (every 2 days for up to 14 days post-viral)
+  // Also clears expired shadowban states so accounts naturally return
+  // to standard rules after their full 17-day rest+rampup cycle.
+  cron.schedule('0 7 * * *', async function() {
+    try {
+      var dailyObjectives = require('./dailyObjectives');
+      var accountDayState = require('./accountDayState');
+      // First clear stale shadowban states so the morning summary reflects
+      // the right post-rampup state.
+      await accountDayState.clearOldShadowbanStates(db);
+      await dailyObjectives.sendDailyObjectives(db);
+    } catch (err) {
+      console.error('Daily objectives cron failed', err.message);
+    }
+  }, { timezone: 'Africa/Porto-Novo' });
+
   // Viral post notifications — every 10 min
   cron.schedule('*/10 * * * *', async function() {
     try { await runForEachPlatform(notifyViralPosts); } catch (err) { console.error('Viral notification cron failed', err.message); }

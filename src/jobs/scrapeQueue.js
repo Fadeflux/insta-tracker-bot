@@ -86,6 +86,18 @@ var scrapeWorker = new Worker(
           );
           logger.info('[Notif] account_disabled for @' + accUser + ' (error: ' + errLower.substring(0,80) + ')');
         }
+
+        // === DELETED POST DETECTOR (in VA's ticket) ===
+        // The above creates an in-app dashboard notification. We also push
+        // a message into the VA's ticket channel — but only if the post
+        // had previously gathered real views (otherwise it's likely just a
+        // brand-new post with a transient scrape error, not a real deletion).
+        try {
+          var deletedPostDetector = require('./deletedPostDetector');
+          await deletedPostDetector.notifyIfDeleted(db, post, stats.error);
+        } catch (dpErr) {
+          logger.warn('[DeletedPost] notifier failed: ' + dpErr.message);
+        }
       } catch (adErr) {
         logger.warn('[Notif] account_disabled detection failed: ' + adErr.message);
       }
@@ -207,6 +219,16 @@ var scrapeWorker = new Worker(
             } catch (taErr) {
               logger.warn('[AccountAlert] ticket shadowban send failed: ' + taErr.message);
             }
+
+            // Also flag the account in accountDayState so the daily
+            // objectives notifier shows "Repos J1..J7 apres shadowban"
+            // instead of asking the VA to keep posting.
+            try {
+              var accountDayState = require('./accountDayState');
+              await accountDayState.markShadowban(db, sb.accountId);
+            } catch (msErr) {
+              logger.warn('[DayState] markShadowban failed: ' + msErr.message);
+            }
           }
         } catch (sbErr) {
           logger.warn('[Notif] shadowban detection failed: ' + sbErr.message);
@@ -227,6 +249,16 @@ var scrapeWorker = new Worker(
       await ticketViralNotifier.maybeNotifyMilestone(post, stats, db);
     } catch (tvnErr) {
       logger.warn('[ViralTicket] notifier failed: ' + tvnErr.message);
+    }
+
+    // === ACCOUNT WAKE-UP DETECTOR ===
+    // If a previously-flopping account suddenly produces a 5k+ post, notify
+    // the VA so they can reproduce what worked. Wrapped in its own try.
+    try {
+      var accountWakeUp = require('./accountWakeUp');
+      await accountWakeUp.maybeNotifyWakeUp(db, post, stats);
+    } catch (wuErr) {
+      logger.warn('[WakeUp] notifier failed: ' + wuErr.message);
     }
 
     await notifyQueue.add('hourly-update', {
