@@ -380,6 +380,20 @@ DO $$ BEGIN
     PRIMARY KEY (post_id, threshold)
   );
 
+  -- Track which account-level alerts have been sent in the VA's ticket and
+  -- with what severity, so we can re-notify only when the situation gets
+  -- WORSE (e.g. dead-account: 5 failed posts → escalates to 10 failed posts).
+  -- 'kind' is one of: 'dead_account', 'shadowban', 'concentrated_views'.
+  -- 'severity' is a numeric measure that goes up as things deteriorate
+  -- (e.g. count of failed posts, or % of views concentrated on one account).
+  CREATE TABLE IF NOT EXISTS account_alerts_sent (
+    account_id    INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    kind          VARCHAR(32) NOT NULL,
+    last_severity INTEGER NOT NULL DEFAULT 0,
+    sent_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (account_id, kind)
+  );
+
   -- Per-user read state. We don't want to spam every user with the same notif
   -- counter, so each dashboard user has their own "last read" timestamp per
   -- platform. Notifs newer than this timestamp count as unread.
