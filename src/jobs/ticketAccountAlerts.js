@@ -186,21 +186,75 @@ async function notifyShadowban(db, account, failedPostCount) {
     return;
   }
 
+  // Look at the account's history: did it ever have decent posts?
+  // We define "decent" as ≥1000 views — well above the shadowban threshold,
+  // so it really means the account had a working algorithmic distribution
+  // at some point. The decision tree below gives different advice:
+  //   - History of decent posts → put the account on rest, then ramp up
+  //   - Never had decent posts → drop it, no point trying to rescue
+  var hadDecent = false;
+  var bestPostViews = 0;
+  try {
+    var historyQuery = await db.pool.query(
+      "SELECT COALESCE(MAX(latest.views), 0) AS best_views " +
+      "FROM posts p " +
+      "LEFT JOIN LATERAL (" +
+      "  SELECT views FROM snapshots s " +
+      "  WHERE s.post_id = p.id AND COALESCE(s.error, '') <> 'coaching_sent' " +
+      "  ORDER BY s.scraped_at DESC LIMIT 1" +
+      ") latest ON true " +
+      "WHERE p.account_id = $1 AND p.deleted_at IS NULL",
+      [account.id]
+    );
+    bestPostViews = Number(historyQuery.rows[0] && historyQuery.rows[0].best_views || 0);
+    hadDecent = bestPostViews >= 1000;
+  } catch (e) {
+    logger.warn('[AccountAlert] history check failed for @' + account.username + ': ' + e.message);
+    // Fall back to "never had decent" — safer to suggest dropping than to
+    // tell them to wait 2 weeks on a dead account.
+  }
+
   var isEscalation = decision.previousSeverity > 0;
   var emoji = isEscalation ? '🚨' : '🚫';
   var header = isEscalation ? 'SHADOWBAN CONFIRME — SITUATION QUI EMPIRE' : 'COMPTE PROBABLEMENT SHADOWBAN';
-  var content =
+
+  // Common intro
+  var intro =
     emoji + ' **' + header + '** ' + emoji + '\n\n' +
     ticket.mentions.va + ' ton compte **@' + account.username + '** (' + account.platform.toUpperCase() + ') a ete probablement shadowban par la plateforme.\n\n' +
     '📉 ' + failedPostCount + ' posts recents (≥24h) ont chacun moins de 300 vues — comportement typique du shadowban.\n\n' +
     (isEscalation
-      ? 'La situation continue de se degrader (' + decision.previousSeverity + ' → ' + failedPostCount + ' posts touches).\n'
-      : '') +
-    '⚠️ ' + ticket.mentions.leadership + ' — Le compte est probablement bloque par l\'algorithme. Il faut envisager de l\'abandonner et d\'en creer un nouveau.';
+      ? 'La situation continue de se degrader (' + decision.previousSeverity + ' → ' + failedPostCount + ' posts touches).\n\n'
+      : '');
+
+  // Different advice depending on whether the account ever performed well
+  var advice;
+  if (hadDecent) {
+    function fm(n) { return Number(n || 0).toLocaleString('fr-FR'); }
+    advice =
+      '✅ **Ce compte a deja bien fonctionne** (meilleur post: ' + fm(bestPostViews) + ' vues). On va le sauver — pas le jeter.\n\n' +
+      '**📋 Procedure a suivre :**\n' +
+      '1. Garde bien les logs du compte (mot de passe, email, recovery)\n' +
+      '2. Deconnecte le compte du telephone\n' +
+      '3. Laisse-le se reposer **1 a 2 semaines** sans aucune activite\n\n' +
+      '**🚀 Quand tu reprends (apres 1-2 semaines) — reprise progressive :**\n' +
+      '   • J1 : 1 post seulement\n' +
+      '   • J2 : 2 posts\n' +
+      '   • J3 : 3 posts\n' +
+      '   • J4+ : retour normal (6 posts/jour)\n\n' +
+      '⚠️ ' + ticket.mentions.leadership + ' — Le VA met le compte en pause. On reprend doucement dans 2 semaines.';
+  } else {
+    advice =
+      '❌ **Ce compte n\'a jamais bien fonctionne** (meilleur post: ' + (bestPostViews > 0 ? bestPostViews + ' vues' : 'aucun post performant') + ').\n\n' +
+      'Pas la peine de le mettre en pause — un compte qui n\'a jamais decolle ne va pas magiquement performer apres 2 semaines de repos.\n\n' +
+      '⚠️ ' + ticket.mentions.leadership + ' — Compte a abandonner. Cree-en un nouveau.';
+  }
+
+  var content = intro + advice;
 
   try {
     await ticket.channel.send({ content: content, allowedMentions: { parse: ['users', 'roles'] } });
-    logger.info('[AccountAlert] shadowban sent for @' + account.username + ' (severity=' + failedPostCount + ') in #' + ticket.channel.name);
+    logger.info('[AccountAlert] shadowban sent for @' + account.username + ' (severity=' + failedPostCount + ', hadDecent=' + hadDecent + ', best=' + bestPostViews + ') in #' + ticket.channel.name);
     await recordAlertSent(db, account.id, 'shadowban', failedPostCount);
   } catch (e) {
     logger.warn('[AccountAlert] shadowban send failed: ' + e.message);
