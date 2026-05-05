@@ -188,6 +188,22 @@ function initCronJobs(client) {
   //   try { await sweepDashboardUsers(); } catch (err) { console.error('Dashboard revocation sweep failed', err.message); }
   // }, { timezone: 'Africa/Porto-Novo' });
 
+  // Daily account-level health checks — runs at 11h Bénin time, after the
+  // VA inactivity scan (10h). Sends ticket alerts for:
+  //   - Dead accounts: 5+ posts (older than 24h) with <100 views each
+  //   - Concentrated views: VAs with 3+ accounts where one makes ≥80% of views
+  // Each alert is idempotent and only re-fires when severity worsens — see
+  // src/jobs/ticketAccountAlerts.js for the per-alert dedup logic.
+  cron.schedule('0 11 * * *', async function() {
+    try {
+      var ticketAccountAlerts = require('./ticketAccountAlerts');
+      await ticketAccountAlerts.checkDeadAccounts(db);
+      await ticketAccountAlerts.checkConcentratedViews(db);
+    } catch (err) {
+      console.error('Daily account alerts cron failed', err.message);
+    }
+  }, { timezone: 'Africa/Porto-Novo' });
+
   // Viral post notifications — every 10 min
   cron.schedule('*/10 * * * *', async function() {
     try { await runForEachPlatform(notifyViralPosts); } catch (err) { console.error('Viral notification cron failed', err.message); }
