@@ -1649,6 +1649,7 @@ h+='<button class="btn-sm btn-off" onclick="runRecomputeSummaries()" style="padd
 h+='<button class="btn-sm btn-off" onclick="runTestViralNotif()" style="padding:9px 14px;font-size:12px;font-weight:700">🔥 Test notif viral</button>';
 h+='<button class="btn-sm btn-off" onclick="runTestDailyObj()" style="padding:9px 14px;font-size:12px;font-weight:700">☀️ Test notif matinale</button>';
 h+='<button class="btn-sm btn-off" onclick="runTestDailyRecap()" style="padding:9px 14px;font-size:12px;font-weight:700">📊 Test recap manager</button>';
+h+='<button class="btn-sm btn-off" onclick="runTestWeeklyStats()" style="padding:9px 14px;font-size:12px;font-weight:700">📅 Test stats hebdo VA</button>';
 h+='<button class="btn-sm btn-off" onclick="runDiagToday()" style="padding:9px 14px;font-size:12px;font-weight:700">🔍 Diagnostic vues du jour</button>';
 h+='</div>';
 h+='<div id="adm_action_msg" style="margin-top:10px;font-size:11px;min-height:14px"></div>';
@@ -1900,6 +1901,28 @@ function markShadowban(accountId){
       if(d.success){loadAccountDays();}
       else{alert('Erreur: '+(d.error||'inconnue'))}
     }).catch(function(e){alert('Erreur: '+e.message)});
+}
+
+// === TEST: trigger the weekly VA stats on demand ===
+// Send each VA their weekly recap right now, instead of waiting for Sunday 20h.
+function runTestWeeklyStats(){
+  if(!confirm('Envoyer les stats hebdo a TOUS les VAs maintenant ?\n\nCa peut spammer les tickets si tu testes plusieurs fois. Continue ?'))return;
+  var btn=event.target;var oldText=btn.textContent;btn.textContent='⏳ En cours...';btn.disabled=true;
+  setAdmActionMsg('Envoi des stats en cours (peut prendre 30s)...','var(--text3)');
+  fetch(A+'/api/admin/test-weekly-stats',{method:'POST',headers:{'X-Auth-Token':T,'Content-Type':'application/json'}})
+    .then(function(r){return r.json()}).then(function(d){
+      btn.textContent=oldText;btn.disabled=false;
+      if(d.success){
+        var r=d.result||{};
+        if(r.totalVas===0){
+          setAdmActionMsg('⚠️ Aucun VA n\'a poste cette semaine, rien a envoyer.','var(--orange)');
+        } else {
+          setAdmActionMsg('✓ Stats envoyees : '+r.sent+' VAs / skipped: '+r.skipped+' / failed: '+r.failed+' (sur '+r.totalVas+' total)','var(--green)');
+        }
+      } else {
+        setAdmActionMsg('✗ '+(d.error||'Erreur'),'var(--red)');
+      }
+    }).catch(function(e){btn.textContent=oldText;btn.disabled=false;setAdmActionMsg('✗ '+e.message,'var(--red)')});
 }
 
 // === TEST: trigger the daily manager recap on demand ===

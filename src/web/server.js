@@ -1642,6 +1642,18 @@ function createWebServer() {
     }
   });
 
+  // === TEST: trigger the weekly VA stats on demand ===
+  app.post('/api/admin/test-weekly-stats', checkAuth, checkAdmin, async function(req, res) {
+    try {
+      var weeklyVaStats = require('../jobs/weeklyVaStats');
+      var result = await weeklyVaStats.sendWeeklyStats(db);
+      res.json({ success: true, result: result });
+    } catch(err) {
+      console.error('[Admin] test-weekly-stats failed:', err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // === In-app notifications (bell icon) ===
   // List recent notifications, optionally filtered by platform.
   app.get('/api/notifications', checkAuth, async function(req, res) {
