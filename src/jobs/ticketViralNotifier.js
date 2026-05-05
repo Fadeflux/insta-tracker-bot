@@ -184,16 +184,18 @@ async function maybeNotifyMilestone(post, stats, db) {
   }
 
   // Build mentions. VA gets a real mention if we have their discord_id;
-  // manager always gets the role mention (so all managers see it).
+  // manager and team leader always get the role mention (so all of them see it).
   var vaMention = post.va_discord_id ? ('<@' + post.va_discord_id + '>') : ('@' + (post.va_name || 'VA'));
   var managerMention = pc.managerRoleId ? ('<@&' + pc.managerRoleId + '>') : '@manager';
+  var teamLeaderMention = pc.teamLeaderRoleId ? (' <@&' + pc.teamLeaderRoleId + '>') : '';
+  var leadershipMention = managerMention + teamLeaderMention;
 
   var content = buildMessage({
     threshold: topThreshold,
     post: post,
     stats: stats,
     vaMention: vaMention,
-    managerMention: managerMention,
+    managerMention: leadershipMention,
   });
 
   try {
