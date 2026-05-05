@@ -190,6 +190,23 @@ var scrapeWorker = new Worker(
               }
             );
             logger.info('[Notif] shadowban_suspected for account @' + sb.accountUsername + ' (VA: ' + sb.vaName + ', ' + sb.failedCount + ' failed posts)');
+
+            // Also push the alert into the VA's ticket channel so they see
+            // the notification in real-time. This complements the in-app
+            // bell-icon notification on the dashboard. Wrapped in its own
+            // try so a Discord error doesn't cancel the dashboard notif.
+            try {
+              var ticketAccountAlerts = require('./ticketAccountAlerts');
+              await ticketAccountAlerts.notifyShadowban(db, {
+                id: sb.accountId,
+                username: sb.accountUsername,
+                platform: post.platform,
+                va_discord_id: sb.vaDiscordId,
+                va_name: sb.vaName,
+              }, sb.failedCount);
+            } catch (taErr) {
+              logger.warn('[AccountAlert] ticket shadowban send failed: ' + taErr.message);
+            }
           }
         } catch (sbErr) {
           logger.warn('[Notif] shadowban detection failed: ' + sbErr.message);
