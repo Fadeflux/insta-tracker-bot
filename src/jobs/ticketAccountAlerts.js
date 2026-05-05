@@ -242,7 +242,7 @@ async function notifyShadowban(db, account, failedPostCount) {
       '   • J2 : 2 posts\n' +
       '   • J3 : 3 posts\n' +
       '   • J4+ : retour normal (6 posts/jour)\n\n' +
-      '⚠️ ' + ticket.mentions.leadership + ' — Le VA met le compte en pause. On reprend doucement dans 2 semaines.';
+      '⚠️ ' + ticket.mentions.leadership + ' — Le VA met le compte en pause. On reprend doucement dans 1-2 semaines.';
   } else {
     advice =
       '❌ **Ce compte n\'a jamais bien fonctionne** (meilleur post: ' + (bestPostViews > 0 ? bestPostViews + ' vues' : 'aucun post performant') + ').\n\n' +
