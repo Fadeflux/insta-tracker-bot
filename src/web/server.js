@@ -1628,6 +1628,20 @@ function createWebServer() {
     }
   });
 
+  // === TEST: trigger the daily manager recap on demand ===
+  // Sends today's recap to all platforms that have CHANNEL_RECAP_QUOTIDIEN_*
+  // configured. Useful to verify the message format and channel resolution.
+  app.post('/api/admin/test-daily-recap', checkAuth, checkAdmin, async function(req, res) {
+    try {
+      var dailyManagerRecap = require('../jobs/dailyManagerRecap');
+      var result = await dailyManagerRecap.sendDailyRecap(db);
+      res.json({ success: true, result: result });
+    } catch(err) {
+      console.error('[Admin] test-daily-recap failed:', err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // === In-app notifications (bell icon) ===
   // List recent notifications, optionally filtered by platform.
   app.get('/api/notifications', checkAuth, async function(req, res) {
