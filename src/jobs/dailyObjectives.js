@@ -116,6 +116,20 @@ function buildMessage(va) {
   function fm(n) { return Number(n || 0).toLocaleString('fr-FR'); }
   var lines = [];
   lines.push('☀️ **Bonjour ! Voici tes objectifs aujourd\'hui**');
+
+  // Daily motivational quote — deterministic so all VAs get the same one
+  // each morning, creating a sense of unity. Lazily loaded so the quotes
+  // module isn't required at file-load time (avoids circular issues if
+  // anything else later imports dailyObjectives).
+  try {
+    var quotes = require('./quotes');
+    var q = quotes.getQuoteOfTheDay();
+    if (q) {
+      lines.push('');
+      lines.push(quotes.formatQuote(q));
+    }
+  } catch (e) { /* if quotes module not present, skip silently */ }
+
   lines.push('');
 
   // Group accounts by platform
