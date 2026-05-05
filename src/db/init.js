@@ -407,6 +407,26 @@ DO $$ BEGIN
     PRIMARY KEY (va_discord_id, kind)
   );
 
+  -- Tracks which badges each VA currently has. Keyed on (va_discord_id, kind).
+  -- Earned badges expire after 14 days without earning ANY new badge — this
+  -- pushes VAs to keep performing. The badges module updates last_earned_at
+  -- whenever the VA gains a new badge of any type.
+  -- 'kind' is one of: 'top1', 'firstViral', 'viral10', 'regularity', 'record100k'.
+  CREATE TABLE IF NOT EXISTS va_badges (
+    va_discord_id   VARCHAR(64) NOT NULL,
+    kind            VARCHAR(32) NOT NULL,
+    earned_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    metadata        JSONB,                 -- e.g. { peak_views: 124000, month: '2026-05' }
+    PRIMARY KEY (va_discord_id, kind)
+  );
+
+  -- One row per VA, tracking when they last earned ANY badge. Used to
+  -- expire all badges if the VA has been idle for 14 days.
+  CREATE TABLE IF NOT EXISTS va_badge_activity (
+    va_discord_id     VARCHAR(64) PRIMARY KEY,
+    last_earned_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
+
   -- Per-account override for the "day J" calculation. By default the day is
   -- counted from the first tracked post on the account, but VAs sometimes
   -- forget to send the first link(s) — so an admin can adjust the start
