@@ -224,6 +224,20 @@ function initCronJobs(client) {
     }
   }, { timezone: 'Africa/Porto-Novo' });
 
+  // Daily manager recap — 23h59 Bénin time. Posts a summary of the day in
+  // the platform's #recap-quotidien channel (CHANNEL_RECAP_QUOTIDIEN_{PLAT}).
+  // Includes posts/views/virals, top 3 VAs, top 3 viral reels, alerts,
+  // and tomorrow's expected workload. Skips platforms without a configured
+  // channel.
+  cron.schedule('59 23 * * *', async function() {
+    try {
+      var dailyManagerRecap = require('./dailyManagerRecap');
+      await dailyManagerRecap.sendDailyRecap(db);
+    } catch (err) {
+      console.error('Daily manager recap cron failed', err.message);
+    }
+  }, { timezone: 'Africa/Porto-Novo' });
+
   // Viral post notifications — every 10 min
   cron.schedule('*/10 * * * *', async function() {
     try { await runForEachPlatform(notifyViralPosts); } catch (err) { console.error('Viral notification cron failed', err.message); }
