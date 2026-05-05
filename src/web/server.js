@@ -1654,6 +1654,19 @@ function createWebServer() {
     }
   });
 
+  // === TEST: trigger the inactivity alerts on demand ===
+  // Bypasses the per-VA cooldown by ignoring the dedup check.
+  app.post('/api/admin/test-inactivity', checkAuth, checkAdmin, async function(req, res) {
+    try {
+      var inactivityAlerts = require('../jobs/inactivityAlerts');
+      var result = await inactivityAlerts.runInactivityChecks(db);
+      res.json({ success: true, result: result });
+    } catch(err) {
+      console.error('[Admin] test-inactivity failed:', err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // === In-app notifications (bell icon) ===
   // List recent notifications, optionally filtered by platform.
   app.get('/api/notifications', checkAuth, async function(req, res) {

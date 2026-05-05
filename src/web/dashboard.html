@@ -1650,6 +1650,7 @@ h+='<button class="btn-sm btn-off" onclick="runTestViralNotif()" style="padding:
 h+='<button class="btn-sm btn-off" onclick="runTestDailyObj()" style="padding:9px 14px;font-size:12px;font-weight:700">☀️ Test notif matinale</button>';
 h+='<button class="btn-sm btn-off" onclick="runTestDailyRecap()" style="padding:9px 14px;font-size:12px;font-weight:700">📊 Test recap manager</button>';
 h+='<button class="btn-sm btn-off" onclick="runTestWeeklyStats()" style="padding:9px 14px;font-size:12px;font-weight:700">📅 Test stats hebdo VA</button>';
+h+='<button class="btn-sm btn-off" onclick="runTestInactivity()" style="padding:9px 14px;font-size:12px;font-weight:700">😴 Test notifs inactivite</button>';
 h+='<button class="btn-sm btn-off" onclick="runDiagToday()" style="padding:9px 14px;font-size:12px;font-weight:700">🔍 Diagnostic vues du jour</button>';
 h+='</div>';
 h+='<div id="adm_action_msg" style="margin-top:10px;font-size:11px;min-height:14px"></div>';
@@ -1901,6 +1902,25 @@ function markShadowban(accountId){
       if(d.success){loadAccountDays();}
       else{alert('Erreur: '+(d.error||'inconnue'))}
     }).catch(function(e){alert('Erreur: '+e.message)});
+}
+
+// === TEST: trigger the inactivity alerts on demand ===
+// Sends to all VAs/accounts that match the inactivity criteria right now.
+function runTestInactivity(){
+  if(!confirm('Lancer le scan d\'inactivite maintenant ?\n\nVa envoyer des notifs dans les tickets des VAs inactifs (24h+) et ceux qui ont des comptes negliges (72h+).'))return;
+  var btn=event.target;var oldText=btn.textContent;btn.textContent='⏳ En cours...';btn.disabled=true;
+  setAdmActionMsg('Scan en cours...','var(--text3)');
+  fetch(A+'/api/admin/test-inactivity',{method:'POST',headers:{'X-Auth-Token':T,'Content-Type':'application/json'}})
+    .then(function(r){return r.json()}).then(function(d){
+      btn.textContent=oldText;btn.disabled=false;
+      if(d.success){
+        var r=d.result||{};
+        var msg='✓ VA inactifs : '+(r.vaSent||0)+' envoyes / '+(r.vaSkipped||0)+' skip. Comptes negliges : '+(r.accountSent||0)+' envoyes / '+(r.accountSkipped||0)+' skip.';
+        setAdmActionMsg(msg,'var(--green)');
+      } else {
+        setAdmActionMsg('✗ '+(d.error||'Erreur'),'var(--red)');
+      }
+    }).catch(function(e){btn.textContent=oldText;btn.disabled=false;setAdmActionMsg('✗ '+e.message,'var(--red)')});
 }
 
 // === TEST: trigger the weekly VA stats on demand ===
