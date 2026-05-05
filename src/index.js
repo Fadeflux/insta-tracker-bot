@@ -162,6 +162,34 @@ client.once('ready', async function() {
     console.error('[Inactivity] Setup failed:', e.message);
   }
 
+  // Hook the top-account decline notifier
+  try {
+    var topAccountDeclining = require('./jobs/topAccountDeclining');
+    topAccountDeclining.setDiscordClient(client);
+    console.log('[TopDecline] Module wired to Discord client');
+  } catch (e) {
+    console.error('[TopDecline] Setup failed:', e.message);
+  }
+
+  // Hook the consultation buttons (📩 Conseil / 📞 Appel) — wires the
+  // interactionCreate listener for button clicks
+  try {
+    var consultButtons = require('./jobs/consultButtons');
+    consultButtons.setDiscordClient(client);
+    console.log('[Consult] Module wired to Discord client');
+  } catch (e) {
+    console.error('[Consult] Setup failed:', e.message);
+  }
+
+  // Hook the badges module (Discord roles + nickname sync per VA performance)
+  try {
+    var badges = require('./jobs/badges');
+    badges.setDiscordClient(client);
+    console.log('[Badges] Module wired to Discord client (' + badges.BADGES.length + ' badge types)');
+  } catch (e) {
+    console.error('[Badges] Setup failed:', e.message);
+  }
+
   createNotifyWorker();
   initCronJobs(client);
   // Register slash commands (idempotent — safe to run on every boot)
