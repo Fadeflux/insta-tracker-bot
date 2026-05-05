@@ -394,6 +394,19 @@ DO $$ BEGIN
     PRIMARY KEY (account_id, kind)
   );
 
+  -- VA-level alerts dedup. The account_alerts_sent table is keyed on
+  -- account_id with a foreign-key to accounts(id), which means we can't
+  -- piggyback on it for VA-aggregate alerts (e.g. inactivity, weekly stats
+  -- reminders). This dedicated table stores the last-sent state for VA-level
+  -- alert kinds, keyed on (va_discord_id, kind).
+  CREATE TABLE IF NOT EXISTS va_alerts_sent (
+    va_discord_id VARCHAR(64) NOT NULL,
+    kind          VARCHAR(64) NOT NULL,
+    last_severity INTEGER NOT NULL DEFAULT 0,
+    sent_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (va_discord_id, kind)
+  );
+
   -- Per-account override for the "day J" calculation. By default the day is
   -- counted from the first tracked post on the account, but VAs sometimes
   -- forget to send the first link(s) — so an admin can adjust the start
