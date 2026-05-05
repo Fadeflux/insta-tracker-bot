@@ -135,6 +135,24 @@ client.once('ready', async function() {
     console.error('[ManagerRecap] Setup failed:', e.message);
   }
 
+  // Hook the weekly VA stats notifier (Sunday 20h personal recap)
+  try {
+    var weeklyVaStats = require('./jobs/weeklyVaStats');
+    weeklyVaStats.setDiscordClient(client);
+    console.log('[WeeklyStats] Module wired to Discord client');
+  } catch (e) {
+    console.error('[WeeklyStats] Setup failed:', e.message);
+  }
+
+  // Hook the personal record notifier (celebrates the VA's new best post)
+  try {
+    var personalRecord = require('./jobs/personalRecord');
+    personalRecord.setDiscordClient(client);
+    console.log('[PersonalRecord] Module wired to Discord client');
+  } catch (e) {
+    console.error('[PersonalRecord] Setup failed:', e.message);
+  }
+
   createNotifyWorker();
   initCronJobs(client);
   // Register slash commands (idempotent — safe to run on every boot)
